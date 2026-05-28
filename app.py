@@ -12,7 +12,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Style CSS personnalisé pour donner un look "App Mobile VIP"
+# Injection CSS propre pour l'interface "VIP Mobile"
 st.markdown("""
     <style>
     .main { background-color: #0e1117; }
@@ -30,27 +30,28 @@ st.markdown("""
     }
     .pack-box {
         background-color: #1f2937;
-        padding: 15px;
+        padding: 18px;
         border-radius: 12px;
         border-left: 5px solid #10b981;
-        margin-bottom: 15px;
+        margin-bottom: 20px;
     }
     .match-card {
         background-color: #111827;
-        padding: 10px 15px;
+        padding: 12px;
         border-radius: 8px;
         margin: 8px 0;
+        border: 1px solid #374151;
     }
     </style>
 """, unsafe_allow_html=True)
 
-# ─── CONFIG BACKEND ────────────────────────────────────────────────────────────
+# ─── CONFIGURATION BACKEND ────────────────────────────────────────────────────
 API_KEY     = 'bdbb7557ab0c884d6b6bcb14c33e90fb'
 MARKETS     = 'h2h'
 PACK_CIBLES = [2, 3, 5, 10, 20]
 FENETRE_H   = 168
 
-# ─── MOTEUR DE DONNÉES (FONCTIONS REPRISES ET SÉCURISÉES) ──────────────────────
+# ─── MOTEUR DE DONNÉES ────────────────────────────────────────────────────────
 @st.cache_data(ttl=1800)
 def fetch_tous_les_matchs_ui():
     url_sports = f'https://api.the-odds-api.com/v4/sports/?apiKey={API_KEY}'
@@ -74,7 +75,8 @@ def fetch_tous_les_matchs_ui():
         url = f'https://api.the-odds-api.com/v4/sports/{ligue}/odds/?apiKey={API_KEY}&regions=eu&markets={MARKETS}&oddsFormat=decimal'
         try:
             r = requests.get(url, timeout=12)
-            if r.status_code == 401: break
+            if r.status_code == 401: 
+                break
             r.raise_for_status()
             for m in r.json():
                 raw_total[m['id']] = m
@@ -88,7 +90,8 @@ def fetch_tous_les_matchs_ui():
     for match in raw_total.values():
         try:
             date_match = datetime.fromisoformat(match['commence_time'].replace('Z', '+00:00'))
-        except ValueError: continue
+        except ValueError: 
+            continue
 
         if not (maintenant - timedelta(minutes=15) <= date_match <= fin_fenetre):
             continue
@@ -104,7 +107,8 @@ def fetch_tous_les_matchs_ui():
                     for out in mkt.get('outcomes', []):
                         cotes_par_issue[out['name']].append(out['price'])
 
-        if not cotes_par_issue: continue
+        if not cotes_par_issue: 
+            continue
 
         selections = []
         total_prob_brut = 0
@@ -125,26 +129,121 @@ def fetch_tous_les_matchs_ui():
 
         matchs.append({
             'id': match['id'], 'match': f"{home} vs {away}", 'league': league, 'date': label_date,
-            'prono': best['equipe'], 'cote': best['cote'], 'prob': best['prob_pct']
+            'prono': best['equipe'], 'cote': best['cote'], 'prob': best['prob_pct'], 'nb_bk': best['nb_bk']
         })
 
     matchs.sort(key=lambda x: x['prob'], reverse=True)
     return matchs
 
 def construire_ticket(matchs_dispo, cote_cible, ids_utilises):
-    candidats = [m for m in matchs_dispo if m['id'] not in ids_utilises and m['cote'] <= 1.65][:20]
-    if not candidats: return [], 0.0
+    # Élargissement des cotes max admissibles selon la hauteur de la cote cible
+    max_cote_admissible = 2.50 if cote_cible >= 10 else 1.80
+    candidats = [m for m in matchs_dispo if m['id'] not in ids_utilises and m['cote'] <= max_cote_admissible]
+    
+    if not candidats: 
+        return [], 0.0
 
     meilleur = []
     meilleure_cote = 0.0
     meilleure_securite_moyenne = 0.0
 
-    for r in range(1, min(8, len(candidats) + 1)):
+    # Recherche combinatoire optimisée (jusqu'à 6 matchs par coupon)
+    for r in range(1, min(7, len(candidats) + 1)):
         for combo in itertools.combinations(candidats, r):
             cote_tot = 1.0
-            for m in combo: cote_tot *= m['cote']
+            for m in combo: 
+                cote_tot *= m['cote']
 
-            if not (cote_cible * 0.80 <= cote_tot <= cote_cible * 1.50): continue
+            if not (cote_cible * 0.82 <= cote_tot <= cote_cible * 1.45): 
+                continue
+            
             securite_moyenne = sum(m['prob'] for m in combo) / len(combo)
 
-            if securite_moyenne > meilleure_securite
+            # Correction de la syntaxe de comparaison
+            if securite_moyenne > meilleure_securite_moyenne:
+                meilleure_securite_moyenne = securite_moyenne
+                meilleure_cote = round(cote_tot, 2)
+                meilleur = list(combo)
+            elif abs(securite_moyenne - meilleure_securite_moyenne) < 0.01:
+                if abs(cote_tot - cote_cible) < abs(meilleure_cote - cote_cible):
+                    meilleure_cote = round(cote_tot, 2)
+                    meilleur = list(combo)
+
+    return meilleur, meilleure_cote
+
+# ─── INTERFACE GRAPHIQUE (UI) ──────────────────────────────────────────────────
+st.title("🤖 BETCORE AI PLATINUM")
+st.caption("Analyses prédictives basées sur les algorithmes de consensus des bookmakers internationaux.")
+
+if st.button("🔄 Actualiser les données du marché", use_container_width=True):
+    st.cache_data.clear()
+    st.rerun()
+
+with st.spinner("Synchronisation avec l'API et calcul des probabilités..."):
+    matchs_analyses = fetch_tous_les_matchs_ui()
+
+if not matchs_analyses:
+    st.error("Aucun match disponible ou clé API restreinte. Vérifie tes connexions.")
+else:
+    tab1, tab2 = st.tabs(["🎯 PACKS PRÉDICTIFS", "📊 TOUS LES MATCHS"])
+
+    with tab1:
+        ids_utilises = set()
+        
+        for cible in PACK_CIBLES:
+            ticket, cote_reelle = construire_ticket(matchs_analyses, cible, ids_utilises)
+            
+            st.markdown("<div class='pack-box'>", unsafe_allow_html=True)
+            
+            col_title, col_stat = st.columns([2, 1])
+            with col_title:
+                st.subheader(f"📦 Pack Objectif ×{cible}")
+            with col_stat:
+                if ticket:
+                    st.metric(label="Cote Combinée", value=f"×{cote_reelle}")
+            
+            if not ticket:
+                st.warning("⚠️ Pas assez de matchs ultra-fiables disponibles pour composer ce pack.")
+            else:
+                # Calcul des métriques globales du pack (comme dans ton terminal)
+                fiabilite_globale = round(sum(m['prob'] for m in ticket) / len(ticket), 1)
+                
+                if fiabilite_globale >= 75:
+                    risque_label, risque_color = "Faible", "#10b981"
+                elif fiabilite_globale >= 55:
+                    risque_label, risque_color = "Modéré", "#f59e0b"
+                else:
+                    risque_label, risque_color = "Élevé", "#ef4444"
+                
+                # Affichage des KPIs généraux du coupon
+                st.markdown(f"""
+                    <div style='margin-bottom: 10px; font-size: 0.9em; color: #9ca3af;'>
+                        📊 <b>Fiabilité IA :</b> {fiabilite_globale}% | 
+                        🛡️ <b>Niveau de risque :</b> <span style='color: {risque_color}; font-weight: bold;'>{risque_label}</span>
+                    </div>
+                """, unsafe_allow_html=True)
+                
+                # Liste des matchs du pack
+                for m in ticket:
+                    st.markdown(f"""
+                        <div class='match-card'>
+                            <span style='color: #34d399; font-weight: bold;'>⚽ {m['match']}</span><br>
+                            <small style='color: #9ca3af;'>🏆 {m['league']} | 📅 {m['date']}</small><br>
+                            <div style='display: flex; justify-content: space-between; margin-top: 6px; font-size: 0.95em;'>
+                                <span>👉 Prono : <b>{m['prono']}</b></span>
+                                <span style='color: #6ee7b7;'>@{m['cote']} ({m['prob']}% via {m['nb_bk']} BK)</span>
+                            </div>
+                        </div>
+                    """, unsafe_allow_html=True)
+                    ids_utilises.add(m['id'])
+            
+            st.markdown("</div>", unsafe_allow_html=True)
+
+    with tab2:
+        st.write(f"💡 Liste brute des **{len(matchs_analyses)}** matchs détectés, triés par confiance algorithmique :")
+        for m in matchs_analyses:
+            with st.expander(f"🟢 {m['match']} — @{m['cote']} ({m['prob']}%)"):
+                st.write(f"**Ligue/Compétition :** {m['league']}")
+                st.write(f"**Date du coup d'envoi :** {m['date']}")
+                st.write(f"**Analyse IA :** Victoire ou issue favorable pour **{m['prono']}**")
+                st.write(f"**Nombre de Bookmakers analysés :** {m['nb_bk']}")
