@@ -5,9 +5,9 @@ import itertools
 from datetime import datetime, timezone, timedelta
 from collections import defaultdict
 
-# =========================================================
+# =====================================================
 # CONFIG
-# =========================================================
+# =====================================================
 
 st.set_page_config(
     page_title="WinHand AI PRO",
@@ -15,7 +15,7 @@ st.set_page_config(
     layout="wide"
 )
 
-API_KEY = "VOTRE_API_KEY_ICI"
+API_KEY = "YOUR_API_KEY_HERE"
 
 PACK_CIBLES = [2, 3, 5, 10, 20]
 
@@ -27,9 +27,9 @@ MARCHE_INFO = {
     'totals_under': ('Under', 'badge-under'),
 }
 
-# =========================================================
-# CSS
-# =========================================================
+# =====================================================
+# STYLE
+# =====================================================
 
 st.markdown("""
 <style>
@@ -42,57 +42,39 @@ html, body, [class*="css"] {
 .main-title {
     font-size: 55px;
     font-weight: bold;
-    color: #00ffb3;
+    color: #00ff99;
 }
 
 .card {
-    background: #121a2b;
+    background: #131c31;
     padding: 18px;
     border-radius: 14px;
-    margin-bottom: 15px;
-    border: 1px solid #1f2b45;
+    margin-bottom: 20px;
+    border: 1px solid #1d2a45;
 }
 
-.ticket-title {
-    font-size: 28px;
-    color: gold;
-    font-weight: bold;
-}
-
-.match-row {
-    background: #182338;
+.match-card {
+    background: #1a2540;
     padding: 12px;
     border-radius: 10px;
     margin-top: 10px;
 }
 
-.green {
-    color: #00ff99;
-}
-
-.orange {
-    color: orange;
-}
-
-.red {
-    color: #ff5f5f;
-}
-
 .badge {
     padding: 4px 10px;
-    border-radius: 10px;
+    border-radius: 8px;
     font-size: 12px;
     font-weight: bold;
 }
 
 .badge-h2h {
-    background: rgba(0,255,150,0.15);
+    background: rgba(0,255,120,0.15);
     color: #00ff99;
 }
 
 .badge-dc {
-    background: rgba(0,150,255,0.15);
-    color: #3da5ff;
+    background: rgba(0,140,255,0.15);
+    color: #49a7ff;
 }
 
 .badge-btts {
@@ -102,7 +84,7 @@ html, body, [class*="css"] {
 
 .badge-over {
     background: rgba(200,100,255,0.15);
-    color: #d26bff;
+    color: #d06cff;
 }
 
 .badge-under {
@@ -110,30 +92,36 @@ html, body, [class*="css"] {
     color: #ff7070;
 }
 
+.ticket-title {
+    font-size: 30px;
+    color: gold;
+    font-weight: bold;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
-# =========================================================
+# =====================================================
 # HEADER
-# =========================================================
+# =====================================================
 
 st.markdown(
     '<div class="main-title">⚽ WinHand AI PRO</div>',
     unsafe_allow_html=True
 )
 
-st.write("IA Football Predictions • Over/Under • BTTS • Double Chance")
+st.write("AI Football Predictions • Over/Under • BTTS • Double Chance")
 
-# =========================================================
+# =====================================================
 # SIDEBAR
-# =========================================================
+# =====================================================
 
 with st.sidebar:
 
-    st.header("⚙️ Paramètres")
+    st.header("⚙️ SETTINGS")
 
     marches_actifs = st.multiselect(
-        "Marchés",
+        "Markets",
         options=list(MARCHE_INFO.keys()),
         default=[
             'double_chance',
@@ -145,13 +133,13 @@ with st.sidebar:
     )
 
     point_totals = st.selectbox(
-        "Over / Under",
+        "Over / Under Goal Line",
         [1.5, 2.5, 3.5],
         index=1
     )
 
     cote_min = st.slider(
-        "Cote minimum",
+        "Minimum Odds",
         1.05,
         2.0,
         1.10,
@@ -159,7 +147,7 @@ with st.sidebar:
     )
 
     cote_max = st.slider(
-        "Cote maximum",
+        "Maximum Odds",
         1.10,
         5.0,
         2.20,
@@ -167,26 +155,26 @@ with st.sidebar:
     )
 
     bk_min = st.slider(
-        "Minimum bookmakers",
+        "Minimum Bookmakers",
         1,
         10,
         2
     )
 
     fenetre = st.selectbox(
-        "Fenêtre matchs",
+        "Match Window",
         [24, 48, 72, 168],
         index=2
     )
 
     mode_safe = st.toggle(
-        "SAFE IA MODE",
+        "SAFE MODE",
         value=True
     )
 
-# =========================================================
-# API
-# =========================================================
+# =====================================================
+# GET LEAGUES
+# =====================================================
 
 @st.cache_data(ttl=1800)
 def get_ligues():
@@ -208,16 +196,16 @@ def get_ligues():
     except:
         return []
 
-# =========================================================
-# FETCH MATCHES
-# =========================================================
+# =====================================================
+# FETCH PREDICTIONS
+# =====================================================
 
 @st.cache_data(ttl=1800)
 def fetch_predictions():
 
-    ligues = get_ligues()
-
     selections = []
+
+    ligues = get_ligues()
 
     now = datetime.now(timezone.utc)
 
@@ -398,9 +386,9 @@ def fetch_predictions():
 
     return selections
 
-# =========================================================
-# TICKET ENGINE
-# =========================================================
+# =====================================================
+# BUILD TICKET
+# =====================================================
 
 def construire_ticket(sels, cible, used):
 
@@ -416,9 +404,7 @@ def construire_ticket(sels, cible, used):
     )[:18]
 
     best_ticket = None
-
     best_diff = 999
-
     best_conf = 0
 
     for r in range(1, min(7, len(candidats) + 1)):
@@ -466,48 +452,60 @@ def construire_ticket(sels, cible, used):
 
     return list(best_ticket), round(final_cote, 2)
 
-# =========================================================
+# =====================================================
 # LOAD DATA
-# =========================================================
+# =====================================================
 
-with st.spinner("Analyse IA en cours..."):
+with st.spinner("AI Analysis Running..."):
 
     selections = fetch_predictions()
 
 if not selections:
 
-    st.warning("Aucune sélection trouvée.")
+    st.warning("No predictions found.")
 
     st.stop()
 
-# =========================================================
+# =====================================================
 # STATS
-# =========================================================
+# =====================================================
+
+st.markdown("---")
 
 c1, c2, c3 = st.columns(3)
 
 with c1:
-    st.metric("Matchs", len(set(s['match_id'] for s in selections)))
+    st.metric(
+        "Matches",
+        len(set(s['match_id'] for s in selections))
+    )
 
 with c2:
-    st.metric("Sélections", len(selections))
+    st.metric(
+        "Predictions",
+        len(selections)
+    )
 
 with c3:
+
     moyenne = round(
         sum(s['score'] for s in selections)
         / len(selections) * 100,
         1
     )
 
-    st.metric("Fiabilité IA", f"{moyenne}%")
+    st.metric(
+        "AI Reliability",
+        f"{moyenne}%"
+    )
 
-# =========================================================
+# =====================================================
 # PACKS
-# =========================================================
+# =====================================================
 
 st.markdown("---")
 
-st.header("🎯 PACKS IA")
+st.header("🎯 AI PACKS")
 
 used_keys = set()
 
@@ -521,7 +519,7 @@ for cible in PACK_CIBLES:
 
     if not ticket:
 
-        st.warning(f"Impossible de créer le pack x{cible}")
+        st.warning(f"Impossible to create x{cible} pack")
 
         continue
 
@@ -534,13 +532,14 @@ for cible in PACK_CIBLES:
     st.markdown(
         f"""
         <div class="card">
+
         <div class="ticket-title">
         PACK x{cible} → @{cote_finale}
         </div>
 
         <br>
 
-        <b>Fiabilité IA :</b> {fiabilite}%
+        AI Reliability : {fiabilite}%
 
         </div>
         """,
@@ -551,7 +550,7 @@ for cible in PACK_CIBLES:
 
         st.markdown(
             f"""
-            <div class="match-row">
+            <div class="match-card">
 
             <b>{s['match']}</b>
 
@@ -563,15 +562,15 @@ for cible in PACK_CIBLES:
 
             <br><br>
 
-            🎯 {s['prediction']}
+            🎯 Prediction : {s['prediction']}
 
             <br>
 
-            💰 Cote : @{s['cote']}
+            💰 Odds : @{s['cote']}
 
             <br>
 
-            📊 Probabilité : {s['prob']}%
+            📊 Probability : {s['prob']}%
 
             <br>
 
@@ -586,19 +585,19 @@ for cible in PACK_CIBLES:
             f"{s['match_id']}_{s['market_key']}"
         )
 
-# =========================================================
+# =====================================================
 # ALL PREDICTIONS
-# =========================================================
+# =====================================================
 
 st.markdown("---")
 
-st.header("📋 Toutes les prédictions IA")
+st.header("📋 ALL AI PREDICTIONS")
 
 for s in selections[:50]:
 
     st.markdown(
         f"""
-        <div class="match-row">
+        <div class="match-card">
 
         <b>{s['match']}</b>
 
@@ -625,13 +624,13 @@ for s in selections[:50]:
         unsafe_allow_html=True
     )
 
-# =========================================================
+# =====================================================
 # FOOTER
-# =========================================================
+# =====================================================
 
 st.markdown("---")
 
 st.caption(
-    "WinHand AI PRO • The Odds API • Bet Responsibly"
+    "WinHand AI PRO • Powered by The Odds API"
 )
 ```
