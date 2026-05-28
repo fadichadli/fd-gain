@@ -8,7 +8,7 @@ from collections import defaultdict
 st.set_page_config(
     page_title="BetCore AI Platinum",
     page_icon="🤖",
-    layout="centered", # Centré pour un rendu parfait sur écran de smartphone
+    layout="centered",
     initial_sidebar_state="collapsed"
 )
 
@@ -42,7 +42,7 @@ st.markdown("""
         margin: 8px 0;
     }
     </style>
-""", unsafe_unsafe_rendering=True)
+""", unsafe_allow_html=True)
 
 # ─── CONFIG BACKEND ────────────────────────────────────────────────────────────
 API_KEY     = 'bdbb7557ab0c884d6b6bcb14c33e90fb'
@@ -51,7 +51,7 @@ PACK_CIBLES = [2, 3, 5, 10, 20]
 FENETRE_H   = 168
 
 # ─── MOTEUR DE DONNÉES (FONCTIONS REPRISES ET SÉCURISÉES) ──────────────────────
-@st.cache_data(ttl=1800) # Cache de 30 minutes pour économiser tes requêtes API
+@st.cache_data(ttl=1800)
 def fetch_tous_les_matchs_ui():
     url_sports = f'https://api.the-odds-api.com/v4/sports/?apiKey={API_KEY}'
     try:
@@ -147,80 +147,4 @@ def construire_ticket(matchs_dispo, cote_cible, ids_utilises):
             if not (cote_cible * 0.80 <= cote_tot <= cote_cible * 1.50): continue
             securite_moyenne = sum(m['prob'] for m in combo) / len(combo)
 
-            if securite_moyenne > meilleure_securite_moyenne:
-                meilleure_securite_moyenne = securite_moyenne
-                meilleure_cote = round(cote_tot, 2)
-                meilleur = list(combo)
-            elif abs(securite_moyenne - meilleure_securite_moyenne) < 0.01:
-                if abs(cote_tot - cote_cible) < abs(meilleure_cote - cote_cible):
-                    meilleure_cote = round(cote_tot, 2)
-                    meilleur = list(combo)
-
-    return meilleur, meilleure_cote
-
-# ─── INTERFACE GRAPHIQUE (UI) ──────────────────────────────────────────────────
-st.title("🤖 BETCORE AI PLATINUM")
-st.caption("Analyses algorithmiques basées sur le consensus mondial des bookmakers.")
-
-# Bouton de rafraîchissement manuel
-if st.button("🔄 Actualiser les pronostics", use_container_width=True):
-    st.cache_data.clear()
-    st.rerun()
-
-# Chargement de la data
-with st.spinner("Analyse du marché mondial en cours..."):
-    matchs_analyses = fetch_tous_les_matchs_ui()
-
-if not matchs_analyses:
-    st.error("Aucun match de football disponible ou erreur de clé API.")
-else:
-    # Création des onglets pour une navigation fluide sur mobile
-    tab1, tab2 = st.tabs(["🎯 PACKS SÉCURISÉS", "📊 TOUS LES MATCHS"])
-
-    # --- ONGLET 1 : LES PACKS ---
-    with tab1:
-        ids_utilises = set()
-        
-        for cible in PACK_CIBLES:
-            ticket, cote_reelle = construire_ticket(matchs_analyses, cible, ids_utilises)
-            
-            # Conteneur principal du pack
-            with st.container():
-                st.markdown(f"<div class='pack-box'>", unsafe_allow_html=True)
-                
-                # En-tête du pack avec colonnes (Cible vs Cote Réelle)
-                col_title, col_stat = st.columns([2, 1])
-                with col_title:
-                    st.subheader(f"📦 Pack Objectif ×{cible}")
-                with col_stat:
-                    if ticket:
-                        st.metric(label="Cote Finale", value=f"×{cote_reelle}")
-                
-                if not ticket:
-                    st.info("⚠️ Aucun pack ultra-fiable disponible pour cet objectif actuellement.")
-                else:
-                    # Affichage de chaque match du pack sous forme de sous-carte
-                    for m in ticket:
-                        st.markdown(f"""
-                            <div class='match-card'>
-                                <span style='color: #10b981; font-weight: bold;'>⚽ {m['match']}</span><br>
-                                <small style='color: #9ca3af;'>🏆 {m['league']} | 📅 {m['date']}</small><br>
-                                <div style='display: flex; justify-content: space-between; margin-top: 5px;'>
-                                    <span>👉 Prono : <b>{m['prono']}</b></span>
-                                    <span style='color: #34d399;'>@{m['cote']} ({m['prob']}%)</span>
-                                </div>
-                            </div>
-                        """, unsafe_allow_html=True)
-                        ids_utilises.add(m['id'])
-                
-                st.markdown("</div>", unsafe_allow_html=True)
-
-    # --- ONGLET 2 : LA BASE DE DONNÉES EN DIRECT ---
-    with tab2:
-        st.write(f"💡 Liste des **{len(matchs_analyses)}** matchs classés par ordre de fiabilité brute :")
-        for m in matchs_analyses:
-            with st.expander(f"🟢 {m['match']} (@{m['cote']})"):
-                st.write(f"**Compétition :** {m['league']}")
-                st.write(f"**Date du coup d'envoi :** {m['date']}")
-                st.write(f"**Conseil de l'IA :** Victoire de **{m['prono']}**")
-                st.write(f"**Indice de confiance :** {m['prob']}%")
+            if securite_moyenne > meilleure_securite
