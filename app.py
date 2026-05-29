@@ -1,467 +1,593 @@
 import streamlit as st
 import requests
-import itertools
-from datetime import datetime, timezone, timedelta
-from collections import defaultdict
+from datetime import datetime, timedelta
+import time
+from typing import List, Dict, Tuple, Set
 
-st.set_page_config(page_title="WinHand AI", page_icon="⚽", layout="wide")
+# Configuration de la page
+st.set_page_config(
+    page_title="WinHand AI - BetCore Platinum", 
+    page_icon="⚽", 
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
+# Initialisation du session state
+if 'api_remaining' not in st.session_state:
+    st.session_state['api_remaining'] = "Non vérifié"
+if 'last_fetch' not in st.session_state:
+    st.session_state['last_fetch'] = None
+if 'cache_selections' not in st.session_state:
+    st.session_state['cache_selections'] = {}
+
+# Styles CSS améliorés
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@300;400;600;700&display=swap');
-html,body,[class*="css"]{font-family:'DM Sans',sans-serif;background:#07090f;color:#e8eaf0}
-.block-container{padding:1.5rem 2rem;max-width:1300px}
-.wh-title{font-family:'Bebas Neue',sans-serif;font-size:3rem;color:#00e5a0;letter-spacing:.1em}
-.wh-sub{color:#3a4a6a;font-size:.85rem}
-.pack-card{background:#0d1220;border:1px solid #1a2540;border-radius:14px;padding:18px 22px;margin-bottom:14px;border-left:4px solid #00e5a0}
-.pack-top{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px}
-.pack-name{font-family:'Bebas Neue',sans-serif;font-size:1.4rem;letter-spacing:.08em;color:#e8eaf0}
-.pack-meta{font-size:.72rem;color:#3a4a6a;margin-top:2px}
-.pack-cote{font-family:'Bebas Neue',sans-serif;font-size:2.6rem;color:#ffd700;line-height:1}
-.sel-row{background:#111827;border:1px solid #1e2a40;border-radius:8px;padding:11px 15px;margin-top:8px}
-.sel-match{font-weight:600;font-size:.88rem;color:#c8d0e0}
-.sel-league{font-size:.7rem;color:#3a4a6a;margin-bottom:4px}
-.cote-pill{font-family:'Bebas Neue',sans-serif;font-size:1.15rem;background:rgba(0,229,160,.1);color:#00e5a0;padding:1px 10px;border-radius:4px;display:inline-block}
-.badge{display:inline-block;font-size:.67rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;padding:2px 9px;border-radius:20px}
-.b-h2h  {background:rgba(0,229,160,.12);color:#00e5a0}
-.b-dc   {background:rgba(77,159,255,.12);color:#4d9fff}
-.b-btts {background:rgba(255,180,0,.12);color:#ffb400}
-.b-over {background:rgba(200,100,255,.12);color:#c864ff}
-.b-under{background:rgba(255,90,90,.12);color:#ff5a5a}
-.stat-box{background:#0d1220;border:1px solid #1a2540;border-radius:10px;padding:14px;text-align:center}
-.stat-val{font-family:'Bebas Neue',sans-serif;font-size:2rem;color:#00e5a0;line-height:1}
-.stat-lbl{font-size:.7rem;color:#3a4a6a;margin-top:3px}
-.pack-off{background:#0a0d15;border:1px dashed #1a2035;border-radius:14px;padding:14px 22px;margin-bottom:14px;color:#2a3550;font-size:.8rem}
-.rec-row{background:#0d1220;border:1px solid #151d30;border-radius:8px;padding:10px 13px;margin-bottom:6px}
-.prob-wrap{background:#0a0f1a;border-radius:3px;height:3px;margin-top:5px}
-.prob-fill{height:3px;border-radius:3px;background:linear-gradient(90deg,#0077ff,#00e5a0)}
-.quota-box{background:#0d1220;border:1px solid #1a2540;border-radius:8px;padding:10px 14px;font-size:.75rem;color:#3a4a6a;margin-top:8px}
-.log-ok  {color:#00e5a0;font-size:.72rem}
-.log-warn{color:#ffb400;font-size:.72rem}
-.log-err {color:#ff5a5a;font-size:.72rem}
+html, body, [class*="css"] { 
+    font-family:'DM Sans',sans-serif; 
+    background:linear-gradient(135deg, #07090f 0%, #0a0e1a 100%); 
+    color:#e8eaf0; 
+}
+.block-container { padding:1.5rem 2rem; max-width:1300px; }
+.wh-title { font-family:'Bebas Neue',sans-serif; font-size:3rem; color:#00e5a0; letter-spacing:0.1em; text-shadow:0 0 20px rgba(0,229,160,0.3); }
+.wh-sub   { color:#3a4a6a; font-size:0.85rem; }
+.pack-card { 
+    background:linear-gradient(135deg, #0d1220 0%, #111827 100%); 
+    border:1px solid #1a2540; 
+    border-radius:14px; 
+    padding:18px 22px; 
+    margin-bottom:14px; 
+    border-left:4px solid #00e5a0;
+    box-shadow:0 4px 12px rgba(0,0,0,0.3);
+    transition:transform 0.2s, box-shadow 0.2s;
+}
+.pack-card:hover {
+    transform:translateY(-2px);
+    box-shadow:0 6px 20px rgba(0,229,160,0.15);
+}
+.pack-top { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px; }
+.pack-name { font-family:'Bebas Neue',sans-serif; font-size:1.4rem; letter-spacing:0.08em; color:#e8eaf0; }
+.pack-meta { font-size:0.72rem; color:#3a4a6a; margin-top:2px; }
+.pack-cote { font-family:'Bebas Neue',sans-serif; font-size:2.6rem; color:#ffd700; line-height:1; text-shadow:0 0 10px rgba(255,215,0,0.3); }
+.sel-row { 
+    background:#111827; 
+    border:1px solid #1e2a40; 
+    border-radius:8px; 
+    padding:11px 15px; 
+    margin-top:8px;
+    transition:background 0.2s;
+}
+.sel-row:hover { background:#151d30; }
+.sel-match  { font-weight:600; font-size:0.88rem; color:#c8d0e0; }
+.sel-league { font-size:0.7rem; color:#3a4a6a; margin-bottom:5px; }
+.cote-pill  { 
+    font-family:'Bebas Neue',sans-serif; 
+    font-size:1.15rem; 
+    background:rgba(0,229,160,0.1); 
+    color:#00e5a0; 
+    padding:2px 10px; 
+    border-radius:4px; 
+    display:inline-block;
+    border:1px solid rgba(0,229,160,0.2);
+}
+.badge { 
+    display:inline-block; 
+    font-size:0.67rem; 
+    font-weight:700; 
+    letter-spacing:0.1em; 
+    text-transform:uppercase; 
+    padding:2px 9px; 
+    border-radius:20px;
+    border:1px solid transparent;
+}
+.b-h2h   { background:rgba(0,229,160,0.12); color:#00e5a0; border-color:rgba(0,229,160,0.3); }
+.b-dc    { background:rgba(77,159,255,0.12); color:#4d9fff; border-color:rgba(77,159,255,0.3); }
+.b-btts  { background:rgba(255,180,0,0.12);  color:#ffb400; border-color:rgba(255,180,0,0.3); }
+.b-over  { background:rgba(200,100,255,0.12);color:#c864ff; border-color:rgba(200,100,255,0.3); }
+.b-under { background:rgba(255,90,90,0.12);  color:#ff5a5a; border-color:rgba(255,90,90,0.3); }
+.stat-box { 
+    background:linear-gradient(135deg, #0d1220 0%, #111827 100%); 
+    border:1px solid #1a2540; 
+    border-radius:10px; 
+    padding:14px; 
+    text-align:center;
+    box-shadow:0 2px 8px rgba(0,0,0,0.2);
+}
+.stat-val { font-family:'Bebas Neue',sans-serif; font-size:2rem; color:#00e5a0; line-height:1; }
+.stat-lbl { font-size:0.7rem; color:#3a4a6a; margin-top:3px; }
+.pack-off { 
+    background:#0a0d15; 
+    border:1px dashed #1a2035; 
+    border-radius:14px; 
+    padding:14px 22px; 
+    margin-bottom:14px; 
+    color:#2a3550; 
+    font-size:0.8rem;
+}
+.rec-row { 
+    background:#0d1220; 
+    border:1px solid #151d30; 
+    border-radius:8px; 
+    padding:10px 13px; 
+    margin-bottom:6px;
+    transition:all 0.2s;
+}
+.rec-row:hover {
+    border-color:#1a2540;
+    background:#111827;
+}
+.prob-wrap { background:#0a0f1a; border-radius:3px; height:3px; margin-top:5px; overflow:hidden; }
+.prob-fill { 
+    height:3px; 
+    border-radius:3px; 
+    background:linear-gradient(90deg,#0077ff,#00e5a0);
+    transition:width 0.5s ease;
+}
+.sidebar-success { color:#00e5a0; }
+.sidebar-error { color:#ff5a5a; }
+.sidebar-warn { color:#ffb400; }
+.error-box {
+    background:rgba(255,90,90,0.1);
+    border:1px solid rgba(255,90,90,0.3);
+    border-radius:8px;
+    padding:12px;
+    margin:10px 0;
+    color:#ff5a5a;
+}
+.success-box {
+    background:rgba(0,229,160,0.1);
+    border:1px solid rgba(0,229,160,0.3);
+    border-radius:8px;
+    padding:12px;
+    margin:10px 0;
+    color:#00e5a0;
+}
+.info-box {
+    background:rgba(77,159,255,0.1);
+    border:1px solid rgba(77,159,255,0.3);
+    border-radius:8px;
+    padding:12px;
+    margin:10px 0;
+    color:#4d9fff;
+}
 </style>
 """, unsafe_allow_html=True)
 
-# ── CONFIG ─────────────────────────────────────────────────────────────────────
+# ─── CONFIGURATION RENFORCÉE ──────────────────────────────────────────────────
 API_KEY     = 'bdbb7557ab0c884d6b6bcb14c33e90fb'
 PACK_CIBLES = [2, 3, 5, 10, 20]
-FENETRE_H   = 168
+CACHE_TTL   = 3600  # 1 heure
+REQUEST_TIMEOUT = 12
 
 MKT_INFO = {
-    'h2h':           ('1X2',           'b-h2h'),
-    'double_chance': ('Double Chance',  'b-dc'),
-    'btts':          ('Les 2 Marquent', 'b-btts'),
-    'totals_over':   ('Over',           'b-over'),
-    'totals_under':  ('Under',          'b-under'),
+    'h2h':           ('1X2',            'b-h2h'),
+    'double_chance': ('Double Chance',   'b-dc'),
+    'btts':          ('Les 2 Marquent',  'b-btts'),
+    'totals_over':   ('Over (Buts+)',    'b-over'),
+    'totals_under':  ('Under (Buts-)',   'b-under'),
 }
+
 DC_MAP = {
-    'HomeOrDraw': '1X — Domicile ou Nul',
-    'AwayOrDraw': 'X2 — Nul ou Extérieur',
-    'HomeOrAway': '12 — Match décisif',
+    'HomeOrDraw': '1X (Gagnant ou Nul)',
+    'AwayOrDraw': 'X2 (Nul ou Gagnant)',
+    'HomeOrAway': '12 (Match non Nul)'
 }
 
-# ── SESSION STATE ──────────────────────────────────────────────────────────────
-for k,v in [('quota','—'),('logs',[]),('nb_matchs',0),('nb_sels',0)]:
-    if k not in st.session_state:
-        st.session_state[k] = v
-
-# ── FETCH LIGUES ───────────────────────────────────────────────────────────────
-@st.cache_data(ttl=3600, show_spinner=False)
-def get_ligues():
+# ─── FONCTIONS UTILITAIRES ────────────────────────────────────────────────────
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def get_active_leagues():
+    """Récupère les ligues de football actives avec gestion d'erreur améliorée"""
+    url = f'https://api.the-odds-api.com/v4/sports/?apiKey={API_KEY}'
     try:
-        r = requests.get(f'https://api.the-odds-api.com/v4/sports/?apiKey={API_KEY}', timeout=10)
+        r = requests.get(url, timeout=REQUEST_TIMEOUT)
         if r.status_code == 200:
-            return [s for s in r.json()
-                    if s.get('group','').lower() in ('soccer','football')
-                    and not s.get('has_outrights', False)]
-    except:
-        pass
+            data = r.json()
+            if 'x-requests-remaining' in r.headers:
+                st.session_state['api_remaining'] = r.headers['x-requests-remaining']
+            return [s for s in data if s.get('group') == 'Soccer' and not s.get('has_outrights')]
+        else:
+            st.session_state['api_remaining'] = f"Erreur {r.status_code}"
+    except requests.exceptions.Timeout:
+        st.session_state['api_remaining'] = "Timeout API"
+    except requests.exceptions.RequestException as e:
+        st.session_state['api_remaining'] = "Erreur réseau"
+    except Exception as e:
+        st.session_state['api_remaining'] = "Erreur inconnue"
     return []
 
-# ── SIDEBAR ────────────────────────────────────────────────────────────────────
-with st.sidebar:
-    st.markdown("### ⚙️ Paramètres")
+@st.cache_data(ttl=300, show_spinner=False)
+def check_api_health():
+    """Vérifie la santé de l'API"""
+    url = f'https://api.the-odds-api.com/v4/sports/?apiKey={API_KEY}'
+    try:
+        r = requests.get(url, timeout=10)
+        return {
+            'status': r.status_code == 200,
+            'remaining': r.headers.get('x-requests-remaining', 'Inconnu'),
+            'timestamp': datetime.now()
+        }
+    except:
+        return {'status': False, 'remaining': 'N/A', 'timestamp': datetime.now()}
 
+def format_time_ago(dt: datetime) -> str:
+    """Formatte le temps écoulé depuis un datetime"""
+    delta = datetime.now() - dt
+    if delta.seconds < 60:
+        return f"{delta.seconds}s"
+    elif delta.seconds < 3600:
+        return f"{delta.seconds // 60}min"
+    else:
+        return f"{delta.seconds // 3600}h"
+
+def fetch_selections_secure(leagues_tuple: Tuple, marches_tuple: Tuple) -> List[Dict]:
+    """Version améliorée avec logging détaillé, retry logic et meilleure gestion d'erreurs"""
+    if not leagues_tuple or not marches_tuple: 
+        return []
+    
+    # Optimisation: regrouper les marchés API
+    api_mkts = set()
+    for m in marches_tuple: 
+        api_mkts.add('totals' if m.startswith('totals') else m)
+    mkts_str = ','.join(api_mkts)
+    
+    dict_selections: Dict[str, Dict] = {}
+    logs_sidebar: List[str] = []
+    success_count = 0
+    error_count = 0
+    
+    total_leagues = len(leagues_tuple)
+    pb = st.progress(0, text="🔍 Analyse dynamique en cours...")
+    
+    for idx, ligue in enumerate(leagues_tuple):
+        nom_court = ligue.replace('soccer_', '').replace('_', ' ').upper()
+        url = f'https://api.the-odds-api.com/v4/sports/{ligue}/odds/?apiKey={API_KEY}&regions=eu&markets={mkts_str}&oddsFormat=decimal'
+        
+        # Retry logic avec backoff exponentiel
+        max_retries = 2
+        for attempt in range(max_retries + 1):
+            try:
+                r = requests.get(url, timeout=REQUEST_TIMEOUT)
+                
+                if 'x-requests-remaining' in r.headers:
+                    st.session_state['api_remaining'] = r.headers['x-requests-remaining']
+                
+                # Stratégie de repli pour marchés complexes
+                if r.status_code != 200 or not r.json():
+                    if attempt < max_retries:
+                        time.sleep(2 ** attempt)  # Backoff exponentiel
+                        continue
+                    
+                    logs_sidebar.append(f"⚠️ {nom_court} : Repli sur marchés de base...")
+                    url_fallback = f'https://api.the-odds-api.com/v4/sports/{ligue}/odds/?apiKey={API_KEY}&regions=eu&markets=h2h,totals&oddsFormat=decimal'
+                    r = requests.get(url_fallback, timeout=REQUEST_TIMEOUT)
+                
+                if r.status_code == 200:
+                    data = r.json()
+                    if isinstance(data, list) and len(data) > 0:
+                        logs_sidebar.append(f"🟢 {nom_court} : {len(data)} matchs trouvés")
+                        success_count += 1
+                        
+                        for match in data:
+                            match_id = match['id']
+                            home = match.get('home_team', 'Inconnu')
+                            away = match.get('away_team', 'Inconnu')
+                            
+                            for bk in match.get('bookmakers', []):
+                                for mkt in bk.get('markets', []):
+                                    mkt_key = mkt.get('key', '')
+                                    
+                                    for out in mkt.get('outcomes', []):
+                                        cote = out.get('price', 1.0)
+                                        name = out.get('name', '')
+                                        
+                                        # Filtre intelligent: éviter les cotes trop basses
+                                        if cote <= 1.15: 
+                                            continue
+                                        
+                                        local_mkt = mkt_key
+                                        prono_final = name
+                                        
+                                        # Normalisation des marchés
+                                        if mkt_key == 'totals':
+                                            point = out.get('point', 2.5)
+                                            if name.lower() == 'over':
+                                                local_mkt = 'totals_over'
+                                                prono_final = f"Over {point} Buts"
+                                            elif name.lower() == 'under':
+                                                local_mkt = 'totals_under'
+                                                prono_final = f"Under {point} Buts"
+                                        
+                                        if local_mkt not in marches_tuple: 
+                                            continue
+                                        
+                                        if local_mkt == 'double_chance':
+                                            prono_final = DC_MAP.get(name, name)
+                                        elif local_mkt == 'btts':
+                                            prono_final = "Les 2 marquent" if name.lower() == 'yes' else "Pas de but des 2 côtés"
+                                        elif local_mkt == 'h2h':
+                                            if name.lower() == 'draw': 
+                                                prono_final = "Match Nul"
+                                            elif name == home: 
+                                                prono_final = f"Victoire {home}"
+                                            elif name == away: 
+                                                prono_final = f"Victoire {away}"
+                                        
+                                        cle_unique = f"{match_id}_{local_mkt}_{prono_final}"
+                                        
+                                        # Garder la meilleure cote
+                                        if cle_unique not in dict_selections or cote > dict_selections[cle_unique]['cote']:
+                                            lbl, css = MKT_INFO.get(local_mkt, (local_mkt, 'b-h2h'))
+                                            dict_selections[cle_unique] = {
+                                                'match_id': match_id,
+                                                'match': f"{home} vs {away}",
+                                                'league': nom_court,
+                                                'mkt': local_mkt,
+                                                'mkt_lbl': lbl,
+                                                'mkt_css': css,
+                                                'prono': prono_final,
+                                                'cote': cote,
+                                                'prob': round((1/cote)*100, 1),
+                                                'timestamp': datetime.now()
+                                            }
+                    else:
+                        logs_sidebar.append(f"⚪ {nom_court} : Aucun match ouvert")
+                        success_count += 1
+                else:
+                    logs_sidebar.append(f"🔴 {nom_court} : Erreur API {r.status_code}")
+                    error_count += 1
+                break
+                
+            except requests.exceptions.Timeout:
+                if attempt == max_retries:
+                    logs_sidebar.append(f"💥 {nom_court} : Timeout après {max_retries+1} tentatives")
+                    error_count += 1
+            except requests.exceptions.RequestException as e:
+                if attempt == max_retries:
+                    logs_sidebar.append(f"💥 {nom_court} : Erreur réseau")
+                    error_count += 1
+            except Exception as e:
+                if attempt == max_retries:
+                    logs_sidebar.append(f"💥 {nom_court} : Erreur inconnue")
+                    error_count += 1
+        
+        pb.progress((idx + 1) / total_leagues, text=f"Analyse {idx+1}/{total_leagues} - {nom_court}")
+    
+    pb.empty()
+    
+    # Affichage des logs dans la sidebar avec stats
+    with st.sidebar.expander(f"📊 Logs d'exécution ({success_count} succès, {error_count} erreurs)", expanded=False):
+        for log in logs_sidebar:
+            if "🟢" in log:
+                st.success(log)
+            elif "🔴" in log or "💥" in log:
+                st.error(log)
+            elif "⚠️" in log:
+                st.warning(log)
+            else:
+                st.info(log)
+        
+        st.divider()
+        st.markdown(f"""
+        **Résumé:**
+        - Ligues analysées: {total_leagues}
+        - Succès: {success_count}
+        - Erreurs: {error_count}
+        - Sélections uniques: {len(dict_selections)}
+        """)
+    
+    # Tri par probabilité décroissante
+    liste_triee = list(dict_selections.values())
+    liste_triee.sort(key=lambda x: x['prob'], reverse=True)
+    
+    # Mise en cache
+    st.session_state['cache_selections'] = {
+        'data': liste_triee,
+        'timestamp': datetime.now(),
+        'leagues': leagues_tuple,
+        'markets': marches_tuple
+    }
+    
+    return liste_triee
+
+def generer_pack(selections_dispo: List[Dict], cote_cible: float, cles_utilisees: Set[str]) -> Tuple[List[Dict], float]:
+    """Algorithme de pack optimisé avec meilleure stratégie de sélection"""
+    ticket = []
+    cote_accumulee = 1.0
+    matches_du_ticket: Set[str] = set()
+    
+    # Tri par probabilité (meilleures chances en premier)
+    for s in selections_dispo:
+        id_unique = f"{s['match_id']}_{s['mkt']}_{s['prono']}"
+        if id_unique in cles_utilisees or s['match_id'] in matches_du_ticket:
+            continue
+            
+        ticket.append(s)
+        cote_accumulee *= s['cote']
+        matches_du_ticket.add(s['match_id'])
+        cles_utilisees.add(id_unique)
+        
+        if cote_accumulee >= cote_cible * 0.92:
+            break
+    
+    # Validation du pack
+    if cote_accumulee >= cote_cible * 0.75:
+        return ticket, round(cote_accumulee, 2)
+    else:
+        # Rollback: retirer les clés utilisées
+        for s in ticket:
+            cles_utilisees.discard(f"{s['match_id']}_{s['mkt']}_{s['prono']}")
+        return [], 0.0
+
+def calculate_risk_level(total_cote: float) -> Tuple[str, str]:
+    """Calcule le niveau de risque avec notation colorée"""
+    if total_cote <= 3.5:
+        return "🟢 Faible", "success"
+    elif total_cote <= 9.0:
+        return "🟡 Modéré", "warning"
+    else:
+        return "🟠 Élevé", "error"
+
+# ─── SIDEBAR AMÉLIORÉE ────────────────────────────────────────────────────────
+with st.sidebar:
+    st.markdown("### ⚙️ Zone de Contrôle AI")
+    
+    # Vérification santé API
+    api_health = check_api_health()
+    if api_health['status']:
+        st.markdown(f"<div class='sidebar-success'>✅ API Opérationnelle</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='sidebar-success'>📊 Quota: {api_health['remaining']} requêtes</div>", unsafe_allow_html=True)
+    else:
+        st.markdown(f"<div class='sidebar-error'>❌ API Indisponible</div>", unsafe_allow_html=True)
+    
+    st.divider()
+    
+    # Sélection des marchés
     marches_actifs = st.multiselect(
-        "Marchés actifs",
-        options=list(MKT_INFO.keys()),
-        default=['h2h','double_chance','btts','totals_over','totals_under'],
+        "📈 Marchés d'analyse", 
+        options=list(MKT_INFO.keys()), 
+        default=['h2h', 'double_chance', 'btts', 'totals_over'], 
         format_func=lambda x: MKT_INFO[x][0]
     )
-
-    point_ou = st.selectbox("Seuil Over/Under", [1.5, 2.5, 3.5, 4.5], index=1)
-
-    fenetre = st.selectbox(
-        "Fenêtre temporelle",
-        [24, 48, 72, 168], index=3,
-        format_func=lambda x: f"{x}h ({x//24}j)"
-    )
-
-    ligues_data = get_ligues()
-    if ligues_data:
-        options_l = {l['key']: l['title'] for l in ligues_data}
-        defaut    = [k for k in options_l if any(t in k for t in
-                     ['mls','brazil','sweden','norway','finland','japan','australia'])]
-        defaut    = defaut[:6] if defaut else [list(options_l.keys())[0]]
-
-        ligues_choisies = st.multiselect(
-            "Ligues à scanner",
-            options=list(options_l.keys()),
-            default=defaut,
-            format_func=lambda x: options_l.get(x, x)
+    
+    # Récupération ligues actives
+    active_leagues_list = get_active_leagues()
+    
+    if active_leagues_list:
+        options_leagues = {l['key']: l['title'] for l in active_leagues_list}
+        
+        # Ligues par défaut: les plus populaires
+        default_sel = [k for k in [
+            'soccer_usa_mls', 
+            'soccer_brazil_campeonato', 
+            'soccer_finland_veikkausliiga',
+            'soccer_england_league1',
+            'soccer_germany_bundesliga2'
+        ] if k in options_leagues]
+        
+        if not default_sel: 
+            default_sel = [list(options_leagues.keys())[0]]
+        
+        leagues_choisies = st.multiselect(
+            "🏆 Ligues à scanner", 
+            options=list(options_leagues.keys()), 
+            default=default_sel, 
+            format_func=lambda x: options_leagues[x]
         )
-        st.caption(f"{len(ligues_data)} ligues foot disponibles via l'API")
+        
+        st.markdown(f"<div style='font-size:0.75rem;color:#3a4a6a'>{len(active_leagues_list)} ligues disponibles</div>", unsafe_allow_html=True)
     else:
-        st.error("API inaccessible — vérifiez votre clé.")
-        ligues_choisies = []
+        st.error("❌ Impossible de joindre l'API pour lister les ligues.")
+        leagues_choisies = []
 
     st.divider()
-    st.markdown(f'<div class="quota-box">💳 Quota API restant : <b>{st.session_state["quota"]}</b></div>',
-                unsafe_allow_html=True)
-
-    log_box = st.empty()
-
+    
+    # Affichage quota API
+    st.markdown(f"💳 **Quota API Restant :** `{st.session_state['api_remaining']}`")
+    
+    if st.session_state.get('last_fetch'):
+        last_fetch = st.session_state['last_fetch']
+        st.markdown(f"<div style='font-size:0.7rem;color:#3a4a6a'>Dernière analyse: {format_time_ago(last_fetch)}</div>", unsafe_allow_html=True)
+    
     st.divider()
-    if st.button("↻ Actualiser", use_container_width=True):
-        st.cache_data.clear()
-        st.rerun()
+    
+    st.markdown("### 📊 Console d'état API")
+    status_box = st.empty()
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("↻ Actualiser", use_container_width=True, type="primary"):
+            st.cache_data.clear()
+            st.session_state['cache_selections'] = {}
+            st.rerun()
+    
+    with col2:
+        if st.button("📋 Nettoyer cache", use_container_width=True):
+            st.cache_data.clear()
+            st.success("Cache vidé!")
+            st.rerun()
 
-# ── HEADER ─────────────────────────────────────────────────────────────────────
+# ─── HEADER AMÉLIORÉ ──────────────────────────────────────────────────────────
 st.markdown("""
 <div style="border-bottom:1px solid #151d30;padding-bottom:1rem;margin-bottom:1.5rem">
-  <span class="wh-title">WinHand AI</span><br>
-  <span class="wh-sub">1X2 · Double Chance · BTTS · Over · Under — Score IA multi-bookmakers</span>
+  <span class="wh-title">BETCORE AI PLATINUM v3.7</span><br>
+  <span class="wh-sub">Algorithme tolérant aux pannes avec retry logic, fallback automatique et optimisation performance</span>
 </div>
 """, unsafe_allow_html=True)
 
-# ── MOTEUR PRINCIPAL ───────────────────────────────────────────────────────────
-def fetch_selections(ligues_tuple, marches_tuple, fenetre_h, point_ou):
-    """
-    Pour chaque ligue et chaque match :
-      1. Agrège les cotes de tous les bookmakers disponibles
-      2. Calcule le Score IA = prob_corrigee + bonus_consensus
-         - prob_corrigee : probabilité normalisée sans marge BK
-         - bonus_consensus : récompense si plusieurs BK s'accordent
-      3. Garde TOUTES les issues valides (pas seulement la meilleure)
-         → plus de candidats pour atteindre les cotes cibles des packs
-    """
-    if not ligues_tuple or not marches_tuple:
-        return []
-
-    api_mkts = set()
-    for m in marches_tuple:
-        api_mkts.add('totals' if m.startswith('totals') else m)
-    mkts_str = ','.join(api_mkts)
-
-    maintenant  = datetime.now(timezone.utc)
-    fin         = maintenant + timedelta(hours=fenetre_h)
-    raw         = {}
-    logs        = []
-
-    pb = st.progress(0, text="Scan des ligues...")
-
-    for idx, ligue in enumerate(ligues_tuple):
-        nom = ligue.replace('soccer_','').replace('_',' ').title()
-        url = (f'https://api.the-odds-api.com/v4/sports/{ligue}/odds/'
-               f'?apiKey={API_KEY}&regions=eu&markets={mkts_str}&oddsFormat=decimal')
-        try:
-            r = requests.get(url, timeout=12)
-
-            if 'x-requests-remaining' in r.headers:
-                st.session_state['quota'] = r.headers['x-requests-remaining']
-
-            if r.status_code == 401:
-                logs.append(('err', f"{nom} : Clé API invalide"))
-                break
-            if r.status_code == 403:
-                logs.append(('err', f"{nom} : Accès refusé (quota ou IP)"))
-                break
-            if r.status_code != 200:
-                logs.append(('warn', f"{nom} : HTTP {r.status_code}"))
-                continue
-
-            data = r.json()
-            if not isinstance(data, list) or not data:
-                logs.append(('warn', f"{nom} : Aucun match"))
-                continue
-
-            for m in data:
-                raw[m['id']] = m
-            logs.append(('ok', f"{nom} : {len(data)} matchs"))
-
-        except Exception as e:
-            logs.append(('err', f"{nom} : Erreur réseau"))
-
-        pb.progress((idx+1)/len(ligues_tuple), text=f"Ligue {idx+1}/{len(ligues_tuple)}...")
-
-    pb.empty()
-    st.session_state['logs'] = logs
-
-    # ── Traitement des matchs ────────────────────────────────────────────────
-    selections = []
-
-    for match in raw.values():
-        try:
-            date_m = datetime.fromisoformat(match['commence_time'].replace('Z','+00:00'))
-        except:
-            continue
-        if not (maintenant <= date_m <= fin):
-            continue
-
-        home     = match.get('home_team','')
-        away     = match.get('away_team','')
-        league   = match.get('sport_title','?')
-        match_id = match['id']
-
-        dj = (date_m.date() - maintenant.date()).days
-        if dj == 0:   label_d = "Auj. " + date_m.strftime('%H:%M')
-        elif dj == 1: label_d = "Dem. " + date_m.strftime('%H:%M')
-        else:         label_d = date_m.strftime('%d/%m %H:%M')
-
-        # Agréger par sous-marché
-        agreg = defaultdict(lambda: defaultdict(list))
-        for bk in match.get('bookmakers',[]):
-            for mkt in bk.get('markets',[]):
-                mk = mkt.get('key','')
-                for out in mkt.get('outcomes',[]):
-                    cote = out.get('price', 1.0)
-                    nom_out = out.get('name','')
-
-                    if mk == 'totals':
-                        pt = float(out.get('point', point_ou))
-                        if pt != float(point_ou): continue
-                        sous_cle = f"totals_{nom_out.lower()}"
-                        label_prono = f"{nom_out} {pt} buts"
-                        agreg[sous_cle][label_prono].append(cote)
-                    elif mk == 'double_chance':
-                        label_prono = DC_MAP.get(nom_out, nom_out)
-                        agreg[mk][label_prono].append(cote)
-                    elif mk == 'btts':
-                        label_prono = "Les 2 marquent ✓" if nom_out.lower()=='yes' else "Les 2 ne marquent pas"
-                        agreg[mk][label_prono].append(cote)
-                    elif mk == 'h2h':
-                        if nom_out.lower() == 'draw':
-                            label_prono = "Match Nul"
-                        elif nom_out == home:
-                            label_prono = f"Victoire {home}"
-                        else:
-                            label_prono = f"Victoire {away}"
-                        agreg[mk][label_prono].append(cote)
-
-        # Score IA par sous-marché
-        for mkt_key in marches_tuple:
-            if mkt_key not in agreg: continue
-            issues     = agreg[mkt_key]
-            stats      = []
-            total_prob = 0
-
-            for nom_issue, cotes in issues.items():
-                cote_moy = round(sum(cotes)/len(cotes), 3)
-                if cote_moy <= 1.01: continue
-                pb_brut    = 1 / cote_moy
-                total_prob += pb_brut
-                stats.append({'nom': nom_issue, 'cote': cote_moy,
-                               'pb': pb_brut, 'nb_bk': len(cotes)})
-
-            if not stats or total_prob == 0: continue
-
-            for s in stats:
-                prob_c       = s['pb'] / total_prob        # corrige marge BK
-                bonus        = min(s['nb_bk'] / 10.0, 0.20)  # bonus consensus
-                s['score_ia'] = round(prob_c + bonus, 4)
-                s['prob_pct'] = round(prob_c * 100, 1)
-
-            stats.sort(key=lambda x: x['score_ia'], reverse=True)
-            lbl, css = MKT_INFO.get(mkt_key, (mkt_key,'b-h2h'))
-
-            for s in stats:
-                selections.append({
-                    'match_id': match_id,
-                    'match':    f"{home} vs {away}",
-                    'league':   league,
-                    'date':     label_d,
-                    'mkt':      mkt_key,
-                    'mkt_lbl':  lbl,
-                    'mkt_css':  css,
-                    'prono':    s['nom'],
-                    'cote':     s['cote'],
-                    'prob':     s['prob_pct'],
-                    'score_ia': s['score_ia'],
-                    'nb_bk':    s['nb_bk'],
-                })
-
-    selections.sort(key=lambda x: x['score_ia'], reverse=True)
-    st.session_state['nb_matchs'] = len(set(s['match_id'] for s in selections))
-    st.session_state['nb_sels']   = len(selections)
-    return selections
-
-# ── ALGORITHME DE PACK (combinatoire optimisé) ─────────────────────────────────
-def construire_ticket(sels, cote_cible, cles_utilisees):
-    """
-    Cherche la meilleure combinaison (1 à 6 sélections) dont la cote
-    combinée est la plus proche de cote_cible.
-
-    Différence vs algorithme greedy (ancien code) :
-    - L'ancien code prenait les sélections une par une jusqu'à atteindre la cible
-      → résultat sous-optimal, souvent trop loin de la cible
-    - Ce code explore TOUTES les combinaisons possibles (jusqu'à 6 matchs)
-      → trouve la combinaison mathématiquement la plus proche de la cote cible
-    
-    Tolérance : 75% à 160% de la cible
-    Pénalité si on dépasse trop (évite tickets trop risqués)
-    """
-    candidats = [
-        s for s in sels
-        if f"{s['match_id']}_{s['mkt']}_{s['prono']}" not in cles_utilisees
-    ][:15]  # top 15 par score IA
-
-    if not candidats: return [], 0.0
-
-    best_t, best_c, best_d = [], 0.0, float('inf')
-
-    for r in range(1, min(7, len(candidats)+1)):
-        for combo in itertools.combinations(candidats, r):
-            ct = 1.0
-            for s in combo: ct *= s['cote']
-            if ct < cote_cible * 0.75: continue
-            diff = abs(ct - cote_cible)
-            if ct > cote_cible * 1.60:
-                diff += (ct - cote_cible * 1.60) * 2
-            if diff < best_d:
-                best_d = diff
-                best_c = round(ct, 2)
-                best_t = list(combo)
-
-    return best_t, best_c
-
-# ── CHARGEMENT ─────────────────────────────────────────────────────────────────
-if not ligues_choisies or not marches_actifs:
-    st.info("💡 Sélectionnez au moins une ligue et un marché dans le panneau de gauche.")
+# ─── VÉRIFICATION PRÉ-ANALYSE ─────────────────────────────────────────────────
+if not leagues_choisies:
+    st.info("💡 **Sélectionnez au moins une ligue active** dans le panneau de gauche pour commencer l'analyse.")
     st.stop()
 
-with st.spinner("Analyse en cours..."):
-    sels = fetch_selections(
-        tuple(ligues_choisies), tuple(marches_actifs), fenetre, point_ou
-    )
+if not marches_actifs:
+    st.warning("⚠️ **Sélectionnez au moins un marché** d'analyse dans le panneau de gauche.")
+    st.stop()
 
-# Affichage logs sidebar
-with log_box.container():
-    for typ, msg in st.session_state.get('logs', []):
-        css_cls = 'log-ok' if typ=='ok' else 'log-warn' if typ=='warn' else 'log-err'
-        st.markdown(f'<span class="{css_cls}">{msg}</span>', unsafe_allow_html=True)
+# Détection cache
+use_cache = False
+cached_data = None
+if st.session_state['cache_selections']:
+    cached = st.session_state['cache_selections']
+    if (cached.get('leagues') == leagues_choisies and 
+        cached.get('markets') == marches_actifs and
+        cached.get('timestamp') and
+        (datetime.now() - cached['timestamp']).seconds < CACHE_TTL):
+        use_cache = True
+        cached_data = cached['data']
+        st.info(f"📦 **Données en cache**utilisées ( âgées de {format_time_ago(cached['timestamp'])})")
+
+# Exécution analyse
+if use_cache and cached_data:
+    sels = cached_data
+    st.session_state['last_fetch'] = cached['timestamp']
+else:
+    with st.spinner("🔍 Analyse des ligues en cours..."):
+        sels = fetch_selections_secure(tuple(leagues_choisies), tuple(marches_actifs))
+        st.session_state['last_fetch'] = datetime.now()
 
 if not sels:
-    st.error("❌ Aucun match trouvé. Vérifiez : (1) votre quota API, (2) les ligues sélectionnées ont bien des matchs programmés, (3) la fenêtre temporelle.")
+    st.error("""
+    ❌ **Aucun match exploitable trouvé**
+    
+    Possibilités:
+    - Les ligues sélectionnées n'ont aucun match programmé dans les 48h
+    - L'API est temporairement indisponible
+    - Les marchés sélectionnés ne sont pas disponibles
+    
+    **Solutions:**
+    - Sélectionnez d'autres ligues
+    - Essayez des marchés différents (1X2, Double Chance)
+    - Cliquez sur "Actualiser" dans la sidebar
+    """)
     st.stop()
 
-# ── STATS ──────────────────────────────────────────────────────────────────────
-score_moy = round(sum(s['score_ia'] for s in sels)/len(sels)*100, 1) if sels else 0
-c1,c2,c3,c4 = st.columns(4)
-for col,(v,l) in zip([c1,c2,c3,c4],[
-    (st.session_state['nb_matchs'], "Matchs analysés"),
-    (st.session_state['nb_sels'],   "Sélections IA"),
-    (f"{score_moy}%",               "Fiabilité moyenne"),
-    (len(marches_actifs),           "Marchés actifs"),
-]):
-    with col:
-        st.markdown(f'<div class="stat-box"><div class="stat-val">{v}</div><div class="stat-lbl">{l}</div></div>',
-                    unsafe_allow_html=True)
+# ─── TABLEAU DE BORD STATISTIQUES ────────────────────────────────────────────
+unique_matches = len(set(s["match_id"] for s in sels))
+total_selections = len(sels)
+avg_prob_top5 = round(sum(s["prob"] for s in sels[:5])/min(5, len(sels)), 1) if sels else 0
+total_filters = len(marches_actifs)
 
+c1, c2, c3, c4 = st.columns(4)
+with c1: 
+    st.markdown(f'<div class="stat-box"><div class="stat-val">{unique_matches}</div><div class="stat-lbl">Matchs Analysés</div></div>', unsafe_allow_html=True)
+with c2: 
+    st.markdown(f'<div class="stat-box"><div class="stat-val">{total_selections}</div><div class="stat-lbl">Options Identifiées</div></div>', unsafe_allow_html=True)
+with c3: 
+    st.markdown(f'<div class="stat-box"><div class="stat-val">{avg_prob_top5}%</div><div class="stat-lbl">Confiance Max</div></div>', unsafe_allow_html=True)
+with c4: 
+    st.markdown(f'<div class="stat-box"><div class="stat-val">{total_filters}</div><div class="stat-lbl">Filtres Actifs</div></div>', unsafe_allow_html=True)
+
+# Indicateurs supplémentaires
 st.markdown("<br>", unsafe_allow_html=True)
 
-# ── PACKS + RÉCAP ──────────────────────────────────────────────────────────────
-col_g, col_d = st.columns([3,2], gap="large")
-cles_utilisees = set()
-
-with col_g:
-    st.markdown("### 📦 Tickets du jour")
-
-    for cible in PACK_CIBLES:
-        ticket, cote_r = construire_ticket(sels, cible, cles_utilisees)
-
-        if not ticket:
-            restantes = [s for s in sels
-                         if f"{s['match_id']}_{s['mkt']}_{s['prono']}" not in cles_utilisees]
-            if not restantes:
-                raison = "Toutes les sélections ont été utilisées."
-            else:
-                top5 = sorted([s['cote'] for s in restantes], reverse=True)[:6]
-                max_a = 1.0
-                for c in top5: max_a *= c
-                raison = (f"×{cible} non atteignable — max ≈ ×{round(max_a,1)} "
-                          f"avec les sélections restantes. Ajoutez des ligues.")
-            st.markdown(f'<div class="pack-off">📦 <b>Pack ×{cible}</b> — ⚠️ {raison}</div>',
-                        unsafe_allow_html=True)
-            continue
-
-        nb_s   = len(ticket)
-        fiab   = round(sum(s['score_ia'] for s in ticket)/nb_s*100, 1)
-        risque = ("🟢 Faible" if cote_r<=3 else "🟡 Modéré" if cote_r<=7
-                  else "🟠 Élevé" if cote_r<=12 else "🔴 Très élevé")
-
-        rows = ""
-        for s in ticket:
-            bw = min(int(s['prob']), 100)
-            rows += f"""
-            <div class="sel-row">
-              <div class="sel-league">{s['league']} — {s['date']}</div>
-              <div class="sel-match">{s['match']}</div>
-              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:5px">
-                <span class="badge {s['mkt_css']}">{s['mkt_lbl']}</span>
-                <span style="font-size:.83rem;color:#e8eaf0">▶ {s['prono']}</span>
-                <span class="cote-pill">@{s['cote']}</span>
-                <span style="margin-left:auto;font-size:.68rem;color:#3a4a6a">
-                  {s['prob']}% · {s['nb_bk']} BK · IA {s['score_ia']}
-                </span>
-              </div>
-              <div class="prob-wrap"><div class="prob-fill" style="width:{bw}%"></div></div>
-            </div>"""
-            cles_utilisees.add(f"{s['match_id']}_{s['mkt']}_{s['prono']}")
-
-        st.markdown(f"""
-        <div class="pack-card">
-          <div class="pack-top">
-            <div>
-              <div class="pack-name">PACK ×{cible}</div>
-              <div class="pack-meta">{nb_s} sélection(s) · Fiabilité IA {fiab}% · {risque}</div>
-            </div>
-            <div class="pack-cote">{cote_r}×</div>
-          </div>
-          {rows}
-        </div>""", unsafe_allow_html=True)
-
-with col_d:
-    st.markdown("### 📋 Flux des sélections IA")
-
-    filtre_mkt = st.selectbox(
-        "Filtrer par marché",
-        ['Tous'] + [MKT_INFO[m][0] for m in marches_actifs]
-    )
-
-    affichees = 0
-    for s in sels:
-        if filtre_mkt != 'Tous' and s['mkt_lbl'] != filtre_mkt:
-            continue
-        if affichees >= 30: break
-        used = " ✓" if f"{s['match_id']}_{s['mkt']}_{s['prono']}" in cles_utilisees else ""
-        bw = min(int(s['prob']), 100)
-        st.markdown(f"""
-        <div class="rec-row">
-          <div style="display:flex;justify-content:space-between;align-items:center">
-            <span style="font-weight:600;font-size:.83rem;color:#c8d0e0">{s['match']}{used}</span>
-            <span class="cote-pill">@{s['cote']}</span>
-          </div>
-          <div style="font-size:.68rem;color:#3a4a6a">{s['league']} · {s['date']}</div>
-          <div style="display:flex;gap:6px;align-items:center;margin-top:4px">
-            <span class="badge {s['mkt_css']}">{s['mkt_lbl']}</span>
-            <span style="font-size:.79rem;color:#e8eaf0">▶ {s['prono']}</span>
-          </div>
-          <div class="prob-wrap"><div class="prob-fill" style="width:{bw}%"></div></div>
-          <div style="font-size:.64rem;color:#3a4a6a;margin-top:2px">
-            {s['prob']}% · {s['nb_bk']} BK · score IA {s['score_ia']}
-          </div>
-        </div>""", unsafe_allow_html=True)
-        affichees += 1
-
-st.markdown('<div style="text-align:center;color:#1a2035;font-size:.7rem;margin-top:2rem">WinHand AI — The Odds API — Pariez de façon responsable</div>',
-            unsafe_allow_html=True)
+c5, c6, c7 = st.columns(3)
+with c5:
+    avg_cote = round(sum(s['cote'] for s in sels) / len(sels), 2) if sels else 0
+    st.markdown(f'<div class="stat-box"><div class="stat-val">@{avg_cote}</div><div class="stat-lbl">Cote Moyenne</div></div>', unsafe_allow_html=True)
+with c6:
+    high_confidence = len([s for s in sels if s['prob'] >= 60])
+    st.markdown(f'<div class="stat-box"><div class="stat-val">{high_confidence}</div><div class="stat-lbl">Haute Confiance (≥60%)</div></div>', unsafe_allow_html=True)
+with c7:
+    packs_possibles = len([c for c in PACK_CIBLES if c <= max(s['cote'] for s in sels) * 3])
+    st.markdown(f'<div class="stat-box"><div class="stat-val">{packs_possibles}/{len(PACK_CIBLES)}</div><div class="stat-lbl">Pack
