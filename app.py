@@ -127,37 +127,13 @@ html, body, [class*="css"] {
 .sidebar-success { color:#00e5a0; }
 .sidebar-error { color:#ff5a5a; }
 .sidebar-warn { color:#ffb400; }
-.error-box {
-    background:rgba(255,90,90,0.1);
-    border:1px solid rgba(255,90,90,0.3);
-    border-radius:8px;
-    padding:12px;
-    margin:10px 0;
-    color:#ff5a5a;
-}
-.success-box {
-    background:rgba(0,229,160,0.1);
-    border:1px solid rgba(0,229,160,0.3);
-    border-radius:8px;
-    padding:12px;
-    margin:10px 0;
-    color:#00e5a0;
-}
-.info-box {
-    background:rgba(77,159,255,0.1);
-    border:1px solid rgba(77,159,255,0.3);
-    border-radius:8px;
-    padding:12px;
-    margin:10px 0;
-    color:#4d9fff;
-}
 </style>
 """, unsafe_allow_html=True)
 
 # ─── CONFIGURATION RENFORCÉE ──────────────────────────────────────────────────
 API_KEY     = 'bdbb7557ab0c884d6b6bcb14c33e90fb'
 PACK_CIBLES = [2, 3, 5, 10, 20]
-CACHE_TTL   = 3600  # 1 heure
+CACHE_TTL   = 3600
 REQUEST_TIMEOUT = 12
 
 MKT_INFO = {
@@ -177,7 +153,6 @@ DC_MAP = {
 # ─── FONCTIONS UTILITAIRES ────────────────────────────────────────────────────
 @st.cache_data(ttl=CACHE_TTL, show_spinner=False)
 def get_active_leagues():
-    """Récupère les ligues de football actives avec gestion d'erreur améliorée"""
     url = f'https://api.the-odds-api.com/v4/sports/?apiKey={API_KEY}'
     try:
         r = requests.get(url, timeout=REQUEST_TIMEOUT)
@@ -190,15 +165,14 @@ def get_active_leagues():
             st.session_state['api_remaining'] = f"Erreur {r.status_code}"
     except requests.exceptions.Timeout:
         st.session_state['api_remaining'] = "Timeout API"
-    except requests.exceptions.RequestException as e:
+    except requests.exceptions.RequestException:
         st.session_state['api_remaining'] = "Erreur réseau"
-    except Exception as e:
+    except Exception:
         st.session_state['api_remaining'] = "Erreur inconnue"
     return []
 
 @st.cache_data(ttl=300, show_spinner=False)
 def check_api_health():
-    """Vérifie la santé de l'API"""
     url = f'https://api.the-odds-api.com/v4/sports/?apiKey={API_KEY}'
     try:
         r = requests.get(url, timeout=10)
@@ -211,7 +185,6 @@ def check_api_health():
         return {'status': False, 'remaining': 'N/A', 'timestamp': datetime.now()}
 
 def format_time_ago(dt: datetime) -> str:
-    """Formatte le temps écoulé depuis un datetime"""
     delta = datetime.now() - dt
     if delta.seconds < 60:
         return f"{delta.seconds}s"
@@ -221,11 +194,9 @@ def format_time_ago(dt: datetime) -> str:
         return f"{delta.seconds // 3600}h"
 
 def fetch_selections_secure(leagues_tuple: Tuple, marches_tuple: Tuple) -> List[Dict]:
-    """Version améliorée avec logging détaillé, retry logic et meilleure gestion d'erreurs"""
     if not leagues_tuple or not marches_tuple: 
         return []
     
-    # Optimisation: regrouper les marchés API
     api_mkts = set()
     for m in marches_tuple: 
         api_mkts.add('totals' if m.startswith('totals') else m)
@@ -243,7 +214,6 @@ def fetch_selections_secure(leagues_tuple: Tuple, marches_tuple: Tuple) -> List[
         nom_court = ligue.replace('soccer_', '').replace('_', ' ').upper()
         url = f'https://api.the-odds-api.com/v4/sports/{ligue}/odds/?apiKey={API_KEY}&regions=eu&markets={mkts_str}&oddsFormat=decimal'
         
-        # Retry logic avec backoff exponentiel
         max_retries = 2
         for attempt in range(max_retries + 1):
             try:
@@ -252,10 +222,9 @@ def fetch_selections_secure(leagues_tuple: Tuple, marches_tuple: Tuple) -> List[
                 if 'x-requests-remaining' in r.headers:
                     st.session_state['api_remaining'] = r.headers['x-requests-remaining']
                 
-                # Stratégie de repli pour marchés complexes
                 if r.status_code != 200 or not r.json():
                     if attempt < max_retries:
-                        time.sleep(2 ** attempt)  # Backoff exponentiel
+                        time.sleep(2 ** attempt)
                         continue
                     
                     logs_sidebar.append(f"⚠️ {nom_court} : Repli sur marchés de base...")
@@ -281,14 +250,12 @@ def fetch_selections_secure(leagues_tuple: Tuple, marches_tuple: Tuple) -> List[
                                         cote = out.get('price', 1.0)
                                         name = out.get('name', '')
                                         
-                                        # Filtre intelligent: éviter les cotes trop basses
                                         if cote <= 1.15: 
                                             continue
                                         
                                         local_mkt = mkt_key
                                         prono_final = name
                                         
-                                        # Normalisation des marchés
                                         if mkt_key == 'totals':
                                             point = out.get('point', 2.5)
                                             if name.lower() == 'over':
@@ -315,7 +282,6 @@ def fetch_selections_secure(leagues_tuple: Tuple, marches_tuple: Tuple) -> List[
                                         
                                         cle_unique = f"{match_id}_{local_mkt}_{prono_final}"
                                         
-                                        # Garder la meilleure cote
                                         if cle_unique not in dict_selections or cote > dict_selections[cle_unique]['cote']:
                                             lbl, css = MKT_INFO.get(local_mkt, (local_mkt, 'b-h2h'))
                                             dict_selections[cle_unique] = {
@@ -342,11 +308,11 @@ def fetch_selections_secure(leagues_tuple: Tuple, marches_tuple: Tuple) -> List[
                 if attempt == max_retries:
                     logs_sidebar.append(f"💥 {nom_court} : Timeout après {max_retries+1} tentatives")
                     error_count += 1
-            except requests.exceptions.RequestException as e:
+            except requests.exceptions.RequestException:
                 if attempt == max_retries:
                     logs_sidebar.append(f"💥 {nom_court} : Erreur réseau")
                     error_count += 1
-            except Exception as e:
+            except Exception:
                 if attempt == max_retries:
                     logs_sidebar.append(f"💥 {nom_court} : Erreur inconnue")
                     error_count += 1
@@ -355,7 +321,6 @@ def fetch_selections_secure(leagues_tuple: Tuple, marches_tuple: Tuple) -> List[
     
     pb.empty()
     
-    # Affichage des logs dans la sidebar avec stats
     with st.sidebar.expander(f"📊 Logs d'exécution ({success_count} succès, {error_count} erreurs)", expanded=False):
         for log in logs_sidebar:
             if "🟢" in log:
@@ -376,11 +341,9 @@ def fetch_selections_secure(leagues_tuple: Tuple, marches_tuple: Tuple) -> List[
         - Sélections uniques: {len(dict_selections)}
         """)
     
-    # Tri par probabilité décroissante
     liste_triee = list(dict_selections.values())
     liste_triee.sort(key=lambda x: x['prob'], reverse=True)
     
-    # Mise en cache
     st.session_state['cache_selections'] = {
         'data': liste_triee,
         'timestamp': datetime.now(),
@@ -391,12 +354,10 @@ def fetch_selections_secure(leagues_tuple: Tuple, marches_tuple: Tuple) -> List[
     return liste_triee
 
 def generer_pack(selections_dispo: List[Dict], cote_cible: float, cles_utilisees: Set[str]) -> Tuple[List[Dict], float]:
-    """Algorithme de pack optimisé avec meilleure stratégie de sélection"""
     ticket = []
     cote_accumulee = 1.0
     matches_du_ticket: Set[str] = set()
     
-    # Tri par probabilité (meilleures chances en premier)
     for s in selections_dispo:
         id_unique = f"{s['match_id']}_{s['mkt']}_{s['prono']}"
         if id_unique in cles_utilisees or s['match_id'] in matches_du_ticket:
@@ -410,17 +371,14 @@ def generer_pack(selections_dispo: List[Dict], cote_cible: float, cles_utilisees
         if cote_accumulee >= cote_cible * 0.92:
             break
     
-    # Validation du pack
     if cote_accumulee >= cote_cible * 0.75:
         return ticket, round(cote_accumulee, 2)
     else:
-        # Rollback: retirer les clés utilisées
         for s in ticket:
             cles_utilisees.discard(f"{s['match_id']}_{s['mkt']}_{s['prono']}")
         return [], 0.0
 
 def calculate_risk_level(total_cote: float) -> Tuple[str, str]:
-    """Calcule le niveau de risque avec notation colorée"""
     if total_cote <= 3.5:
         return "🟢 Faible", "success"
     elif total_cote <= 9.0:
@@ -432,17 +390,15 @@ def calculate_risk_level(total_cote: float) -> Tuple[str, str]:
 with st.sidebar:
     st.markdown("### ⚙️ Zone de Contrôle AI")
     
-    # Vérification santé API
     api_health = check_api_health()
     if api_health['status']:
-        st.markdown(f"<div class='sidebar-success'>✅ API Opérationnelle</div>", unsafe_allow_html=True)
+        st.markdown("<div class='sidebar-success'>✅ API Opérationnelle</div>", unsafe_allow_html=True)
         st.markdown(f"<div class='sidebar-success'>📊 Quota: {api_health['remaining']} requêtes</div>", unsafe_allow_html=True)
     else:
-        st.markdown(f"<div class='sidebar-error'>❌ API Indisponible</div>", unsafe_allow_html=True)
+        st.markdown("<div class='sidebar-error'>❌ API Indisponible</div>", unsafe_allow_html=True)
     
     st.divider()
     
-    # Sélection des marchés
     marches_actifs = st.multiselect(
         "📈 Marchés d'analyse", 
         options=list(MKT_INFO.keys()), 
@@ -450,13 +406,11 @@ with st.sidebar:
         format_func=lambda x: MKT_INFO[x][0]
     )
     
-    # Récupération ligues actives
     active_leagues_list = get_active_leagues()
     
     if active_leagues_list:
         options_leagues = {l['key']: l['title'] for l in active_leagues_list}
         
-        # Ligues par défaut: les plus populaires
         default_sel = [k for k in [
             'soccer_usa_mls', 
             'soccer_brazil_campeonato', 
@@ -482,7 +436,6 @@ with st.sidebar:
 
     st.divider()
     
-    # Affichage quota API
     st.markdown(f"💳 **Quota API Restant :** `{st.session_state['api_remaining']}`")
     
     if st.session_state.get('last_fetch'):
@@ -492,7 +445,6 @@ with st.sidebar:
     st.divider()
     
     st.markdown("### 📊 Console d'état API")
-    status_box = st.empty()
     
     col1, col2 = st.columns(2)
     with col1:
@@ -504,7 +456,6 @@ with st.sidebar:
     with col2:
         if st.button("📋 Nettoyer cache", use_container_width=True):
             st.cache_data.clear()
-            st.success("Cache vidé!")
             st.rerun()
 
 # ─── HEADER AMÉLIORÉ ──────────────────────────────────────────────────────────
@@ -535,7 +486,7 @@ if st.session_state['cache_selections']:
         (datetime.now() - cached['timestamp']).seconds < CACHE_TTL):
         use_cache = True
         cached_data = cached['data']
-        st.info(f"📦 **Données en cache**utilisées ( âgées de {format_time_ago(cached['timestamp'])})")
+        st.info(f"📦 **Données en cache** utilisées (âgées de {format_time_ago(cached['timestamp'])})")
 
 # Exécution analyse
 if use_cache and cached_data:
@@ -578,7 +529,6 @@ with c3:
 with c4: 
     st.markdown(f'<div class="stat-box"><div class="stat-val">{total_filters}</div><div class="stat-lbl">Filtres Actifs</div></div>', unsafe_allow_html=True)
 
-# Indicateurs supplémentaires
 st.markdown("<br>", unsafe_allow_html=True)
 
 c5, c6, c7 = st.columns(3)
@@ -589,5 +539,66 @@ with c6:
     high_confidence = len([s for s in sels if s['prob'] >= 60])
     st.markdown(f'<div class="stat-box"><div class="stat-val">{high_confidence}</div><div class="stat-lbl">Haute Confiance (≥60%)</div></div>', unsafe_allow_html=True)
 with c7:
-    packs_possibles = len([c for c in PACK_CIBLES if c <= max(s['cote'] for s in sels) * 3])
-    st.markdown(f'<div class="stat-box"><div class="stat-val">{packs_possibles}/{len(PACK_CIBLES)}</div><div class="stat-lbl">Pack
+    max_cote_found = max(s['cote'] for s in sels) if sels else 0
+    packs_possibles = len([c for c in PACK_CIBLES if c <= max_cote_found * 3])
+    packs_total = len(PACK_CIBLES)
+    st.markdown(f'<div class="stat-box"><div class="stat-val">{packs_possibles}/{packs_total}</div><div class="stat-lbl">Packs Possibles</div></div>', unsafe_allow_html=True)
+
+# ─── RENDU DE L'INTERFACE ─────────────────────────────────────────────────────
+col_gauche, col_droite = st.columns([3, 2], gap="large")
+global_used_keys = set()
+
+with col_gauche:
+    st.markdown("### 📦 Générateur de Packs Combinés")
+    for cible in PACK_CIBLES:
+        tk, total_cote = generer_pack(sels, cible, global_used_keys)
+        
+        if not tk:
+            st.markdown(f'<div class="pack-off">📦 <b>PACK OBJECTIF ×{cible}</b> — Pas assez de sélections différentes disponibles pour ce niveau de cote aujourd\'hui.</div>', unsafe_allow_html=True)
+            continue
+            
+        avg_prob = round(sum(i['prob'] for i in tk)/len(tk), 1)
+        statut_risque, _ = calculate_risk_level(total_cote)
+        
+        lignes_html = ""
+        for s in tk:
+            lignes_html += f"""
+            <div class="sel-row">
+                <div class="sel-league">{s['league']}</div>
+                <div class="sel-match">{s['match']}</div>
+                <div style="display:flex;align-items:center;gap:8px;margin-top:5px;flex-wrap:wrap;">
+                    <span class="badge {s['mkt_css']}">{s['mkt_lbl']}</span>
+                    <span style="font-size:0.85rem;color:#e8eaf0">👉 {s['prono']}</span>
+                    <span class="cote-pill">@{s['cote']}</span>
+                </div>
+                <div class="prob-wrap"><div class="prob-fill" style="width:{min(s['prob'],100)}%"></div></div>
+            </div>"""
+            
+        st.markdown(f"""
+        <div class="pack-card">
+            <div class="pack-top">
+                <div>
+                    <div class="pack-name">PACK UNIQUE OBJECTIF ×{cible}</div>
+                    <div class="pack-meta">{len(tk)} matchs · Confiance Moyenne {avg_prob}% · Risque : {statut_risque}</div>
+                </div>
+                <div class="pack-cote">{total_cote}×</div>
+            </div>
+            {lignes_html}
+        </div>""", unsafe_allow_html=True)
+
+with col_droite:
+    st.markdown("### 📋 Flux des opportunités (Top 15)")
+    for s in sels[:15]:
+        st.markdown(f"""
+        <div class="rec-row">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+                <span style="font-weight:600;font-size:0.85rem;color:#c8d0e0">{s['match']}</span>
+                <span class="cote-pill">@{s['cote']}</span>
+            </div>
+            <div style="font-size:0.7rem;color:#3a4a6a;margin-top:2px;">{s['league']}</div>
+            <div style="display:flex;gap:6px;align-items:center;margin-top:5px;">
+                <span class="badge {s['mkt_css']}">{s['mkt_lbl']}</span>
+                <span style="font-size:0.8rem;color:#e8eaf0">🎯 {s['prono']}</span>
+            </div>
+            <div class="prob-wrap"><div class="prob-fill" style="width:{min(s['prob'],100)}%"></div></div>
+        </div>""", unsafe_allow_html=True)
