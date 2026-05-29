@@ -52,7 +52,13 @@ MKT_INFO = {
 # ─── SIDEBAR ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("### ⚙️ Paramètres")
-    marches_actifs = st.multiselect("Marchés", options=list(MKT_INFO.keys()), default=['h2h', 'double_chance', 'btts'], format_func=lambda x: MKT_INFO[x][0])
+    # J'ai rajouté les marchés par défaut ici
+    marches_actifs = st.multiselect(
+        "Marchés", 
+        options=list(MKT_INFO.keys()), 
+        default=['h2h', 'double_chance', 'btts', 'totals_over', 'totals_under'], 
+        format_func=lambda x: MKT_INFO[x][0]
+    )
     st.divider()
     if st.button("↻ Actualiser les données", use_container_width=True):
         st.cache_data.clear()
@@ -66,18 +72,22 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# ─── FETCH SECURISE ───────────────────────────────────────────────────────────
+# ─── FETCH SECURISE (CORRIGÉ POUR OVER/UNDER) ─────────────────────────────────
 @st.cache_data(ttl=1800, show_spinner=False)
 def fetch_selections(marches_tuple):
-    # LIMITATION AUX LIGUES MAJEURES POUR EVITER LE BLOCAGE API
     ligues_fiables = [
         'soccer_france_ligue_one', 'soccer_england_premier_league', 
         'soccer_germany_bundesliga', 'soccer_italy_serie_a', 
         'soccer_spain_la_liga', 'soccer_brazil_campeonato'
     ]
     
+    # Préparation des clés pour l'API (over/under s'appelle 'totals' pour l'API)
     api_mkts = set()
-    for m in marches_tuple: api_mkts.add('totals' if m.startswith('totals') else m)
+    for m in marches_tuple: 
+        if m in ['totals_over', 'totals_under']:
+            api_mkts.add('totals')
+        else:
+            api_mkts.add(m)
     mkts_str = ','.join(api_mkts)
     
     selections = []
@@ -86,7 +96,7 @@ def fetch_selections(marches_tuple):
     for i, ligue in enumerate(ligues_fiables):
         url = f'https://api.the-odds-api.com/v4/sports/{ligue}/odds/?apiKey={API_KEY}&regions=eu&markets={mkts_str}&oddsFormat=decimal'
         try:
-            r = requests.get(url, timeout=8)
+            r = requests.get(url, timeout=10) # Temps un peu plus long pour gérer les gros fichiers
             if r.status_code == 200:
                 for match in r.json():
                     match_id = match['id']
@@ -96,16 +106,27 @@ def fetch_selections(marches_tuple):
                         for mkt in bk.get('markets', []):
                             mkt_key = mkt.get('key','')
                             
-                            # On mappe le marché avec la config locale
-                            local_mkt = mkt_key
-                            if mkt_key == 'totals':
-                                local_mkt = 'totals_over' # Simplification pour garantir la donnée
-                                
-                            if local_mkt not in marches_tuple: continue
-                            
                             for out in mkt.get('outcomes', []):
-                                cote = out['price']
-                                if cote <= 1.10: continue # Ignorer les cotes trop faibles
+                                cote = out.get('price', 1.0)
+                                name = out.get('name', '')
+                                
+                                if cote <= 1.10: continue
+                                
+                                # Gestion spéciale pour identifier Over ou Under
+                                local_mkt = mkt_key
+                                prono_final = name
+                                
+                                if mkt_key == 'totals':
+                                    point = out.get('point', 2.5) # Le fameux "point" qui faisait planter !
+                                    if name.lower() == 'over':
+                                        local_mkt = 'totals_over'
+                                        prono_final = f"Over {point}"
+                                    elif name.lower() == 'under':
+                                        local_mkt = 'totals_under'
+                                        prono_final = f"Under {point}"
+                                
+                                # Si le marché n'est pas coché par l'utilisateur, on l'ignore
+                                if local_mkt not in marches_tuple: continue
                                 
                                 lbl, css = MKT_INFO.get(local_mkt, (local_mkt, 'b-h2h'))
                                 
@@ -117,17 +138,16 @@ def fetch_selections(marches_tuple):
                                     'mkt': local_mkt,
                                     'mkt_lbl': lbl,
                                     'mkt_css': css,
-                                    'prono': out['name'],
+                                    'prono': prono_final,
                                     'cote': cote,
                                     'prob': round((1/cote)*100, 1),
-                                    'score_ia': round((1/cote) + 0.1, 4), # Score simulé
-                                    'nb_bk': 15
+                                    'score_ia': round((1/cote) + 0.1, 4),
+                                    'nb_bk': 1
                                 })
         except: pass
         pb.progress((i+1)/len(ligues_fiables), text=f"Analyse {ligue}...")
     
     pb.empty()
-    # Trier par fiabilité (plus la cote est basse, plus c'est fiable, donc prob haute)
     selections.sort(key=lambda x: x['prob'], reverse=True)
     return selections
 
@@ -140,34 +160,33 @@ def construire_ticket(sels, cote_cible, cles_utilisees):
     for s in sels:
         cle_unique = f"{s['match_id']}_{s['mkt']}_{s['prono']}"
         
-        # Ignorer si déjà utilisé dans un autre pack ou le même match dans ce pack
         if cle_unique in cles_utilisees or s['match_id'] in ids_dans_ticket:
             continue
             
-        # Ajouter au ticket
         ticket.append(s)
         cote_actuelle *= s['cote']
         ids_dans_ticket.add(s['match_id'])
         cles_utilisees.add(cle_unique)
         
-        # Arrêter si on a atteint ou légèrement dépassé la cible
         if cote_actuelle >= cote_cible * 0.90:
             break
             
-    # Si le ticket atteint au moins 70% de la cible, on l'accepte
     if cote_actuelle >= cote_cible * 0.70:
         return ticket, round(cote_actuelle, 2)
     else:
-        # On annule l'utilisation de ces clés car le pack a échoué
         for s in ticket:
             cles_utilisees.remove(f"{s['match_id']}_{s['mkt']}_{s['prono']}")
         return [], 0.0
 
 # ─── EXECUTION ────────────────────────────────────────────────────────────────
+if not marches_actifs:
+    st.warning("Veuillez sélectionner au moins un marché dans la barre latérale.")
+    st.stop()
+
 sels = fetch_selections(tuple(marches_actifs))
 
 if not sels:
-    st.error("❌ Aucun match exploitable récupéré. Vérifiez l'API ou réessayez plus tard.")
+    st.error("❌ Aucun match exploitable récupéré. L'API est peut-être vide à cette heure-ci.")
     st.stop()
 
 # ─── STATS BAR ────────────────────────────────────────────────────────────────
@@ -193,7 +212,7 @@ with col_packs:
         ticket, cote_r = construire_ticket(sels, cible, cles_utilisees)
         
         if not ticket:
-            st.markdown(f'<div class="pack-off">📦 <b>Pack ×{cible}</b> — ⚠️ Pas assez de matchs sûrs pour atteindre cette cote aujourd\'hui.</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="pack-off">📦 <b>Pack ×{cible}</b> — ⚠️ Pas assez de matchs pour atteindre cette cote aujourd\'hui.</div>', unsafe_allow_html=True)
             continue
             
         nb_s = len(ticket)
@@ -229,8 +248,8 @@ with col_packs:
 
 # ─── RECAP ────────────────────────────────────────────────────────────────────
 with col_recap:
-    st.markdown("### 📋 Base de données")
-    for s in sels[:15]: # Afficher les 15 meilleurs
+    st.markdown("### 📋 Base de données (Top 20)")
+    for s in sels[:20]:
         bw = min(int(s['prob']), 100)
         st.markdown(f"""
         <div class="rec-row">
