@@ -4,7 +4,6 @@ from datetime import datetime
 
 st.set_page_config(page_title="WinHand AI", page_icon="⚽", layout="wide")
 
-# Initialisation des variables de session pour le suivi du quota API
 if 'api_remaining' not in st.session_state:
     st.session_state['api_remaining'] = "Non vérifié"
 
@@ -40,7 +39,7 @@ html, body, [class*="css"] { font-family:'DM Sans',sans-serif; background:#07090
 </style>
 """, unsafe_allow_html=True)
 
-# ─── CONFIGURATION DE BASE ───────────────────────────────────────────────────
+# ─── CONFIGURATION ───────────────────────────────────────────────────────────
 API_KEY     = 'bdbb7557ab0c884d6b6bcb14c33e90fb'
 PACK_CIBLES = [2, 3, 5, 10, 20]
 
@@ -58,7 +57,6 @@ DC_MAP = {
     'HomeOrAway': '12 (Match non Nul)'
 }
 
-# ─── CHARGEMENT DYNAMIQUE DES LIGUES ACTIVES ─────────────────────────────────
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_active_leagues():
     url = f'https://api.the-odds-api.com/v4/sports/?apiKey={API_KEY}'
@@ -71,11 +69,10 @@ def get_active_leagues():
 
 active_leagues_list = get_active_leagues()
 
-# ─── SIDEBAR PLATINUM ──────────────────────────────────────────────────────────
+# ─── SIDEBAR ──────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("### ⚙️ Zone de Contrôle AI")
     
-    # 1. Sélection intelligente des marchés
     marches_actifs = st.multiselect(
         "Marchés d'analyse", 
         options=list(MKT_INFO.keys()), 
@@ -83,11 +80,9 @@ with st.sidebar:
         format_func=lambda x: MKT_INFO[x][0]
     )
     
-    # 2. Choix ciblé des ligues pour économiser le quota
     if active_leagues_list:
         options_leagues = {l['key']: l['title'] for l in active_leagues_list}
-        # On pré-sélectionne la MLS ou le Brésil par défaut pour la saison actuelle
-        default_sel = [k for k in ['soccer_usa_mls', 'soccer_brazil_campeonato'] if k in options_leagues]
+        default_sel = [k for k in ['soccer_usa_mls', 'soccer_brazil_campeonato', 'soccer_finland_veikkausliiga'] if k in options_leagues]
         if not default_sel: default_sel = [list(options_leagues.keys())[0]]
         
         leagues_choisies = st.multiselect(
@@ -101,8 +96,10 @@ with st.sidebar:
         leagues_choisies = []
 
     st.divider()
-    # Affichage du quota restant en temps réel
     st.markdown(f"💳 **Quota API Restant :** `{st.session_state['api_remaining']}`")
+    
+    st.markdown("### 📊 Console d'état API")
+    status_box = st.empty() # Console de débug en direct
     
     if st.button("↻ Forcer l'actualisation", use_container_width=True):
         st.cache_data.clear()
@@ -111,13 +108,12 @@ with st.sidebar:
 # ─── HEADER ───────────────────────────────────────────────────────────────────
 st.markdown("""
 <div style="border-bottom:1px solid #151d30;padding-bottom:1rem;margin-bottom:1.5rem">
-  <span class="wh-title">BETCORE AI PLATINUM v3.5</span><br>
-  <span class="wh-sub">Optimisation multi-marchés dynamique connectée aux flux mondiaux</span>
+  <span class="wh-title">BETCORE AI PLATINUM v3.6</span><br>
+  <span class="wh-sub">Algorithme de secours tolérant aux pannes de l'offre API Standard</span>
 </div>
 """, unsafe_allow_html=True)
 
-# ─── MOTEUR DE RECHERCHE ET DE PARSING ROBUSTE ────────────────────────────────
-@st.cache_data(ttl=1200, show_spinner=False)
+# ─── MOTEUR SÉCURISÉ AVEC FALLBACK AUTOMATIQUE ───────────────────────────────
 def fetch_selections_secure(leagues_tuple, marches_tuple):
     if not leagues_tuple or not marches_tuple: return []
     
@@ -127,83 +123,101 @@ def fetch_selections_secure(leagues_tuple, marches_tuple):
     mkts_str = ','.join(api_mkts)
     
     dict_selections = {}
-    pb = st.progress(0, text="Calcul du consensus des bookmakers...")
+    logs_sidebar = []
+    
+    pb = st.progress(0, text="Analyse dynamique en cours...")
     
     for idx, ligue in enumerate(leagues_tuple):
+        nom_court = ligue.replace('soccer_', '').replace('_', ' ').upper()
         url = f'https://api.the-odds-api.com/v4/sports/{ligue}/odds/?apiKey={API_KEY}&regions=eu&markets={mkts_str}&oddsFormat=decimal'
+        
         try:
             r = requests.get(url, timeout=12)
-            # Sauvegarde des en-têtes de quota
             if 'x-requests-remaining' in r.headers:
                 st.session_state['api_remaining'] = r.headers['x-requests-remaining']
                 
+            # STRATÉGIE DE REPLI : Si l'offre gratuite bloque les marchés complexes (Code 400 ou vide)
+            if r.status_code != 200 or not r.json():
+                logs_sidebar.append(f"⚠️ {nom_court} : Repli sur les marchés de base...")
+                url_fallback = f'https://api.the-odds-api.com/v4/sports/{ligue}/odds/?apiKey={API_KEY}&regions=eu&markets=h2h,totals&oddsFormat=decimal'
+                r = requests.get(url_fallback, timeout=12)
+                
             if r.status_code == 200:
                 data = r.json()
-                if not isinstance(data, list): continue
-                
-                for match in data:
-                    match_id = match['id']
-                    home, away = match.get('home_team',''), match.get('away_team','')
+                if isinstance(data, list) and len(data) > 0:
+                    logs_sidebar.append(f"🟢 {nom_court} : {len(data)} matchs trouvés")
                     
-                    for bk in match.get('bookmakers', []):
-                        for mkt in bk.get('markets', []):
-                            mkt_key = mkt.get('key','')
-                            
-                            for out in mkt.get('outcomes', []):
-                                cote = out.get('price', 1.0)
-                                name = out.get('name', '')
-                                if cote <= 1.15: continue
+                    for match in data:
+                        match_id = match['id']
+                        home, away = match.get('home_team',''), match.get('away_team','')
+                        
+                        for bk in match.get('bookmakers', []):
+                            for mkt in bk.get('markets', []):
+                                mkt_key = mkt.get('key','')
                                 
-                                local_mkt = mkt_key
-                                prono_final = name
-                                
-                                # Traitement ultra-sécurisé du Over/Under
-                                if mkt_key == 'totals':
-                                    point = out.get('point', 2.5)
-                                    if name.lower() == 'over':
-                                        local_mkt = 'totals_over'
-                                        prono_final = f"Over {point} Buts"
-                                    elif name.lower() == 'under':
-                                        local_mkt = 'totals_under'
-                                        prono_final = f"Under {point} Buts"
-                                
-                                if local_mkt not in marches_tuple: continue
-                                
-                                # Formatage cosmétique intelligent
-                                if local_mkt == 'double_chance':
-                                    prono_final = DC_MAP.get(name, name)
-                                elif local_mkt == 'btts':
-                                    prono_final = "Les 2 équipes marquent" if name.lower() == 'yes' else "Pas de but des deux côtés"
-                                elif local_mkt == 'h2h':
-                                    if name.lower() == 'draw': prono_final = "Match Nul"
-                                    elif name == home: prono_final = f"Victoire {home}"
-                                    elif name == away: prono_final = f"Victoire {away}"
-                                
-                                cle_unique = f"{match_id}_{local_mkt}_{prono_final}"
-                                
-                                # Optimisation : On prend la meilleure cote du marché
-                                if cle_unique not in dict_selections or cote > dict_selections[cle_unique]['cote']:
-                                    lbl, css = MKT_INFO.get(local_mkt, (local_mkt, 'b-h2h'))
-                                    dict_selections[cle_unique] = {
-                                        'match_id': match_id,
-                                        'match': f"{home} vs {away}",
-                                        'league': ligue.replace('soccer_', '').replace('_', ' ').title(),
-                                        'mkt': local_mkt,
-                                        'mkt_lbl': lbl,
-                                        'mkt_css': css,
-                                        'prono': prono_final,
-                                        'cote': cote,
-                                        'prob': round((1/cote)*100, 1)
-                                    }
-        except: pass
+                                for out in mkt.get('outcomes', []):
+                                    cote = out.get('price', 1.0)
+                                    name = out.get('name', '')
+                                    if cote <= 1.15: continue
+                                    
+                                    local_mkt = mkt_key
+                                    prono_final = name
+                                    
+                                    if mkt_key == 'totals':
+                                        point = out.get('point', 2.5)
+                                        if name.lower() == 'over':
+                                            local_mkt = 'totals_over'
+                                            prono_final = f"Over {point} Buts"
+                                        elif name.lower() == 'under':
+                                            local_mkt = 'totals_under'
+                                            prono_final = f"Under {point} Buts"
+                                    
+                                    if local_mkt not in marches_tuple: continue
+                                    
+                                    if local_mkt == 'double_chance':
+                                        prono_final = DC_MAP.get(name, name)
+                                    elif local_mkt == 'btts':
+                                        prono_final = "Les 2 marquent" if name.lower() == 'yes' else "Pas de but des 2 côtés"
+                                    elif local_mkt == 'h2h':
+                                        if name.lower() == 'draw': prono_final = "Match Nul"
+                                        elif name == home: prono_final = f"Victoire {home}"
+                                        elif name == away: prono_final = f"Victoire {away}"
+                                    
+                                    cle_unique = f"{match_id}_{local_mkt}_{prono_final}"
+                                    
+                                    if cle_unique not in dict_selections or cote > dict_selections[cle_unique]['cote']:
+                                        lbl, css = MKT_INFO.get(local_mkt, (local_mkt, 'b-h2h'))
+                                        dict_selections[cle_unique] = {
+                                            'match_id': match_id,
+                                            'match': f"{home} vs {away}",
+                                            'league': nom_court,
+                                            'mkt': local_mkt,
+                                            'mkt_lbl': lbl,
+                                            'mkt_css': css,
+                                            'prono': prono_final,
+                                            'cote': cote,
+                                            'prob': round((1/cote)*100, 1)
+                                        }
+                else:
+                    logs_sidebar.append(f"⚪ {nom_court} : Aucun match ouvert")
+            else:
+                logs_sidebar.append(f"🔴 {nom_court} : Erreur API {r.status_code}")
+        except Exception as e:
+            logs_sidebar.append(f"💥 {nom_court} : Erreur réseau")
+            
         pb.progress((idx + 1) / len(leagues_tuple))
         
     pb.empty()
+    # Affichage des logs dans la sidebar
+    with status_box.container():
+        for log in logs_sidebar:
+            st.caption(log)
+            
     liste_triee = list(dict_selections.values())
     liste_triee.sort(key=lambda x: x['prob'], reverse=True)
     return liste_triee
 
-# ─── ALGORITHME DE PACKS PROPRE ───────────────────────────────────────────────
+# ─── ALGORITHME DE PACKS ──────────────────────────────────────────────────────
 def generer_pack(selections_dispo, cote_cible, cles_utilisees):
     ticket = []
     cote_accumulee = 1.0
@@ -229,7 +243,7 @@ def generer_pack(selections_dispo, cote_cible, cles_utilisees):
             cles_utilisees.remove(f"{s['match_id']}_{s['mkt']}_{s['prono']}")
         return [], 0.0
 
-# ─── CODE D'EXECUTION ET INTERFACE GRAPHIQUE ──────────────────────────────────
+# ─── RENDU DE L'INTERFACE ─────────────────────────────────────────────────────
 if not leagues_choisies:
     st.info("💡 Sélectionnez au moins une ligue active dans le panneau de gauche pour commencer l'analyse.")
     st.stop()
@@ -237,15 +251,15 @@ if not leagues_choisies:
 sels = fetch_selections_secure(tuple(leagues_choisies), tuple(marches_actifs))
 
 if not sels:
-    st.error("❌ Aucun match exploitable trouvé. Cela arrive si la ligue choisie n'a pas de match prévu ces prochaines 48 heures ou si votre quota API restant est à 0.")
+    st.error("❌ Aucun match exploitable trouvé. Les ligues sélectionnées n'ont aucun match programmé par les bookmakers dans les prochaines 48 heures.")
     st.stop()
 
-# Compteurs du Tableau de Bord
+# Tableau de bord
 c1, c2, c3, c4 = st.columns(4)
 with c1: st.markdown(f'<div class="stat-box"><div class="stat-val">{len(set(s["match_id"] for s in sels))}</div><div class="stat-lbl">Matchs Analysés</div></div>', unsafe_allow_html=True)
 with c2: st.markdown(f'<div class="stat-box"><div class="stat-val">{len(sels)}</div><div class="stat-lbl">Options Identifiées</div></div>', unsafe_allow_html=True)
-with c3: st.markdown(f'<div class="stat-box"><div class="stat-val">{round(sum(s["prob"] for s in sels[:5])/5, 1)}%</div><div class="stat-lbl">Indice de confiance Max</div></div>', unsafe_allow_html=True)
-with c4: st.markdown(f'<div class="stat-box"><div class="stat-val">{len(marches_actifs)}</div><div class="stat-lbl">Filtres Marchés</div></div>', unsafe_allow_html=True)
+with c3: st.markdown(f'<div class="stat-box"><div class="stat-val">{round(sum(s["prob"] for s in sels[:5])/5, 1)}%</div><div class="stat-lbl">Indice Max</div></div>', unsafe_allow_html=True)
+with c4: st.markdown(f'<div class="stat-box"><div class="stat-val">{len(marches_actifs)}</div><div class="stat-lbl">Filtres</div></div>', unsafe_allow_html=True)
 
 st.markdown("<br>", unsafe_allow_html=True)
 
@@ -291,7 +305,7 @@ with col_gauche:
         </div>""", unsafe_allow_html=True)
 
 with col_droite:
-    st.markdown("### 📋 Flux des meilleures opportunités (Top 15)")
+    st.markdown("### 📋 Flux des opportunités (Top 15)")
     for s in sels[:15]:
         st.markdown(f"""
         <div class="rec-row">
