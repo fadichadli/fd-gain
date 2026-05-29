@@ -1,98 +1,156 @@
 import streamlit as st
 import requests
 
-st.set_page_config(page_title="BETCORE AI v5.6", page_icon="🚨", layout="wide")
+# Configuration de l'interface
+st.set_page_config(page_title="BETCORE AI v6.0", page_icon="🌍", layout="wide")
 
-# TA CLÉ API
 API_KEY = 'bdbb7557ab0c884d6b6bcb14c33e90fb'
 
-st.title("🚨 BETCORE AI - DIAGNOSTIC v5.6")
-st.divider()
-
-# 1. TEST STRICT DE L'API ET LECTURE DU QUOTA
-@st.cache_data(ttl=60) # On met en cache court pour rafraîchir l'état du quota
-def check_api_status():
+# 1. DETECTION DES LIGUES ACTIVES
+@st.cache_data(ttl=3600)
+def get_live_active_soccer_leagues():
     url = f'https://api.the-odds-api.com/v4/sports/?apiKey={API_KEY}'
     try:
         r = requests.get(url, timeout=10)
         if r.status_code == 200:
-            used = r.headers.get('x-requests-used', 'Inconnu')
-            remaining = r.headers.get('x-requests-remaining', 'Inconnu')
-            return True, used, remaining, r.json()
-        else:
-            return False, 0, 0, r.json().get('message', f'Erreur HTTP {r.status_code}')
-    except Exception as e:
-        return False, 0, 0, str(e)
+            all_leagues = [sport['key'] for sport in r.json() if sport.get('group') == 'Soccer' and not sport.get('has_outrights')]
+            priority_keywords = ['brazil', 'usa', 'mls', 'chile', 'argentina', 'league']
+            sorted_leagues = sorted(all_leagues, key=lambda x: any(kw in x for kw in priority_keywords), reverse=True)
+            return sorted_leagues[:10] # On limite à 10 pour préserver le quota
+    except:
+        pass
+    return ['soccer_brazil_campeonato', 'soccer_usa_mls']
 
-api_ok, used, remaining, api_data = check_api_status()
-
-# Affichage du diagnostic dans la barre latérale
-with st.sidebar:
-    st.header("📊 Statut API")
-    if api_ok:
-        st.success("✅ Connecté au serveur")
-        st.metric("Requêtes Utilisées", used)
-        st.metric("Requêtes Restantes", remaining)
-    else:
-        st.error("❌ Déconnecté")
-
-# GESTION DES ERREURS CRITIQUES
-if not api_ok:
-    st.error("❌ ERREUR CRITIQUE : L'accès aux données de The Odds-API est bloqué.")
-    st.code(api_data) # Affiche le message d'erreur brut du serveur
-    st.warning("💡 Si c'est une erreur liée au quota (Requests limit reached), ton forfait gratuit est épuisé. Tu dois aller sur the-odds-api.com et générer une nouvelle clé API avec une autre adresse email.")
-    st.stop() # On arrête l'application ici pour ne pas causer d'autres bugs
-
-# 2. RECUPERATION SOUPLE (Bypass des filtres stricts)
+# 2. ANALYSE ET FILTRAGE GLOBAL (Le correctif est ici)
 @st.cache_data(ttl=1800)
-def fetch_emergency_data(sports_list):
-    predictions = []
-    # On isole les ligues de foot actives (limité à 6 pour économiser le quota)
-    active_soccer = [s['key'] for s in sports_list if s.get('group') == 'Soccer' and not s.get('has_outrights')]
-    target_leagues = active_soccer[:6]
+def fetch_global_pool(active_leagues):
+    all_valid_predictions = []
     
-    for league in target_leagues:
-        # On ajoute les régions 'uk' et 'us' pour maximiser les chances d'avoir des bookmakers
-        url = f'https://api.the-odds-api.com/v4/sports/{league}/odds/?apiKey={API_KEY}&regions=eu,uk,us&markets=h2h&oddsFormat=decimal'
+    for league in active_leagues:
+        # On ouvre aux régions US, UK et EU pour capter un maximum de bookmakers internationaux
+        url = f'https://api.the-odds-api.com/v4/sports/{league}/odds/?apiKey={API_KEY}&regions=eu,uk,us&markets=h2h,double_chance&oddsFormat=decimal'
         try:
-            r = requests.get(url, timeout=7)
-            if r.status_code == 200:
-                events = r.json()
+            response = requests.get(url, timeout=7)
+            if response.status_code == 200:
+                events = response.json()
                 for event in events:
+                    home_team = event.get('home_team')
+                    away_team = event.get('away_team')
+                    match_name = f"{home_team} vs {away_team}"
+                    league_title = event.get('sport_title', league.upper())
+                    
                     if not event.get('bookmakers'):
                         continue
-                    
-                    # On ne cherche plus de consensus complexe, on prend le PREMIER bookmaker disponible pour débloquer l'affichage
-                    bookmaker = event['bookmakers'][0] 
+                        
+                    # On prend le premier bookmaker qui propose des cotes pour ce match (bypass du filtre strict)
+                    bookmaker = event['bookmakers'][0]
                     
                     for market in bookmaker.get('markets', []):
-                        if market['key'] == 'h2h':
-                            for outcome in market.get('outcomes', []):
-                                cote = outcome.get('price', 1.0)
-                                name = outcome.get('name', '')
+                        for outcome in market.get('outcomes', []):
+                            cote = outcome.get('price', 1.0)
+                            outcome_name = outcome.get('name', '')
+                            
+                            # FILTRE DE SÉCURITÉ : Cotes raisonnables
+                            if cote < 1.30 or cote > 2.30:
+                                continue
                                 
-                                # Filtre très souple : cotes entre 1.25 et 2.50
-                                if 1.25 <= cote <= 2.50:
-                                    predictions.append({
-                                        'match_id': event['id'],
-                                        'ligue': league,
-                                        'match': f"{event['home_team']} vs {event['away_team']}",
-                                        'prono': f"Victoire {name}",
-                                        'cote': cote,
-                                        'bookmaker': bookmaker['title']
-                                    })
-        except:
-            pass
-            
-    # Tri par la cote la plus basse (plus "sécurisée")
-    return sorted(predictions, key=lambda x: x['cote'])
+                            # ÉVALUATION DU RISQUE 
+                            is_away_favorite = (outcome_name == away_team and cote < 1.65)
+                            base_prob = (1 / cote) * 100
+                            score_fiabilite = base_prob - 10 if is_away_favorite else base_prob
+                            
+                            # Traduction propre
+                            prono_clean = outcome_name
+                            if market['key'] == 'double_chance':
+                                if outcome_name == 'HomeOrDraw': prono_clean = "1X (Victoire Domicile ou Nul)"
+                                elif outcome_name == 'AwayOrDraw': prono_clean = f"X2 (Nul ou Victoire {away_team})"
+                                elif outcome_name == 'HomeOrAway': prono_clean = "12 (Pas de match nul)"
 
-# 3. AFFICHAGE DES RÉSULTATS
-with st.spinner("Forçage de l'analyse des flux mondiaux..."):
-    data_pool = fetch_emergency_data(api_data)
+                            uid = f"{event['id']}_{prono_clean}"
+                            
+                            all_valid_predictions.append({
+                                'uid': uid,
+                                'match_id': event['id'],
+                                'match': match_name,
+                                'league': league_title,
+                                'prono': prono_clean,
+                                'cote': cote,
+                                'score': round(score_fiabilite, 1),
+                                'bookmaker': bookmaker['title']
+                            })
+        except:
+            continue
+            
+    # Nettoyage pour garder la meilleure option par pronostic
+    pool_nettoye = {}
+    for p in all_valid_predictions:
+        if p['uid'] not in pool_nettoye or p['score'] > pool_nettoye[p['uid']]['score']:
+            pool_nettoye[p['uid']] = p
+            
+    return sorted(list(pool_nettoye.values()), key=lambda x: x['score'], reverse=True)
+
+# 3. CRÉATION DES PACKS SÉCURISÉS SANS DOUBLONS
+def build_secure_pack(predictions, target_odds):
+    pack = []
+    total_odds = 1.0
+    used_match_ids = set() 
     
-    if data_pool:
-        st.success(f"✅ Déblocage réussi : {len(data_pool)} opportunités brutes récupérées !")
-        st.dataframe(data_pool, use_container_width=True)
-    else:
-        st.warning("⚠️ L'API est connectée et le quota est bon, mais AUCUN match n'est programmé dans les prochaines heures avec ces critères.")
+    for pred in predictions:
+        if total_odds >= target_odds:
+            break
+        # Bloque les matchs déjà présents dans le pack pour éviter les doublons
+        if pred['match_id'] in used_match_ids:
+            continue
+            
+        pack.append(pred)
+        total_odds *= pred['cote']
+        used_match_ids.add(pred['match_id'])
+        
+    if total_odds >= (target_odds * 0.85):
+        return pack, round(total_odds, 2)
+    return [], 0.0
+
+# ─── INTERFACE UTILISATEUR ──────────────────────────────────────────────────
+
+st.title("🌍 BETCORE AI - GLOBAL EDITION v6.0")
+st.subheader("Analyse multi-marchés internationale et création de packs sécurisés")
+st.divider()
+
+with st.spinner("Analyse des flux mondiaux en cours..."):
+    active_leagues = get_live_active_soccer_leagues()
+    data_pool = fetch_global_pool(active_leagues)
+
+if not data_pool:
+    st.error("⚠️ Aucun match n'a pu être extrait. Vérifiez votre connexion ou réessayez plus tard.")
+else:
+    st.success(f"✅ {len(data_pool)} opportunités qualifiées détectées sur le marché mondial.")
+    
+    col1, col2 = st.columns([3, 2], gap="large")
+    
+    with col1:
+        st.header("📦 Packs Combinés")
+        
+        for cible in [2.0, 3.5, 5.0]:
+            pack_matches, final_cote = build_secure_pack(data_pool, cible)
+            
+            if pack_matches:
+                with st.container(border=True):
+                    st.markdown(f"### 🎯 PACK OBJECTIF ×{cible}")
+                    st.caption(f"Cote Réelle : {final_cote}× | {len(pack_matches)} sélections uniques")
+                    
+                    for m in pack_matches:
+                        st.markdown(f"**{m['match']}** — *{m['league']}*")
+                        st.markdown(f"👉 Choix : **{m['prono']}** | Cote : `@ {m['cote']}` *(via {m['bookmaker']})*")
+                        st.divider()
+            else:
+                st.info(f"📦 Pack ×{cible} indisponible : volume de matchs insuffisant.")
+
+    with col2:
+        st.header("📋 Flux Principal")
+        st.caption("Top 10 des sélections classées par indice de fiabilité")
+        
+        for m in data_pool[:10]:
+            with st.container(border=True):
+                st.markdown(f"⚽ **{m['match']}**")
+                st.caption(f"{m['league']} | {m['bookmaker']}")
+                st.markdown(f"🔥 Choix : **{m['prono']}** | `@ {m['cote']}`")
